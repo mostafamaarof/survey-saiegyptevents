@@ -163,11 +163,14 @@
     var started=d.invitations.filter(function(i){return i.status==='started';}).length;
     var completed=d.responses.filter(function(r){return r.is_complete;}).length;
     var anon=d.responses.filter(function(r){return !r.invitation_id;}).length;
-    var rate= invited? Math.round(completed/invited*100):0;
+    var viaLinks=d.responses.filter(function(r){return r.link_id && r.is_complete;}).length;
+    var completedInv=d.responses.filter(function(r){return r.invitation_id && r.is_complete;}).length;
+    var rate= invited? Math.round(completedInv/invited*100):0;
     var tiles='<div class="tiles">'+
       tile('Invited', invited)+
       tile('Started', d.responses.length - completed + started )+
       tile('Completed', completed)+
+      ((d.links&&d.links.length)?tile('Via general links', viaLinks):'')+
       '<div class="tile accent"><div class="k">Completion rate</div><div class="v">'+rate+'<small>%</small></div></div>'+
     '</div>';
     if(anon) tiles=tiles.replace('</div>\n','');
@@ -231,7 +234,7 @@
       '<button class="btn btn-primary btn-sm" id="csvBtn">Export CSV</button></div>'+
       '<div style="overflow:auto"><table><thead><tr><th>SAI / Source</th><th>Status</th><th>Updated</th><th>Language</th></tr></thead><tbody>'+
       (rows.length? rows.map(function(r){
-        var src=r.sai_name? esc(r.sai_name):'<span class="muted">Anonymous</span>';
+        var src=(r.sai_name? esc(r.sai_name):'<span class="muted">Anonymous</span>')+(r.link_label?' <span class="muted">· link: '+esc(r.link_label)+'</span>':'');
         return '<tr><td>'+src+'</td><td><span class="pill '+(r.is_complete?'completed':'started')+'">'+(r.is_complete?'Completed':'Draft')+'</span></td><td class="mono">'+esc((r.updated_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc((r.lang||'').toUpperCase())+'</td></tr>';
       }).join(''):'<tr><td colspan="4" class="muted">No responses yet.</td></tr>')+
       '</tbody></table></div></div>';
@@ -274,6 +277,19 @@
     var body='<div class="card"><h3>Create invitations</h3><p class="muted" style="margin-bottom:14px">Each invitation generates a unique, login-free link for one SAI. Paste one SAI per line for bulk creation (format: <span class="mono">English name | Arabic name | Country | email</span> — only the English name is required).</p>'+
       '<textarea id="bulk" rows="5" placeholder="Supreme Audit Institution of ...&#10;ديوان المحاسبة ... | ... "></textarea>'+
       '<div class="row" style="margin-top:12px"><button class="btn btn-primary btn-sm" id="createBtn">Generate links</button></div></div>';
+    var links=d.links||[];
+    body+='<div class="card"><h3>General invitation link</h3><p class="muted" style="margin-bottom:14px">One shared link for any number of respondents, not tied to a specific SAI (respondents state their institution in the questionnaire). Each respondent gets an independent response. You can disable a link at any time.</p>'+
+      '<div class="row"><input id="linkLabel" placeholder="Optional note, e.g. Email blast — November" style="flex:1;min-width:220px" maxlength="120">'+
+      '<button class="btn btn-primary btn-sm" id="linkBtn">Create general link</button></div>'+
+      (links.length?'<div style="overflow:auto;margin-top:16px"><table><thead><tr><th>Note</th><th>Responses</th><th>Link</th><th></th></tr></thead><tbody>'+
+        links.map(function(l){
+          var link=origin+'/c/'+l.code;
+          return '<tr><td>'+(l.label?esc(l.label):'<span class="muted">—</span>')+(l.active?'':' <span class="pill pending">Disabled</span>')+'</td>'+
+            '<td>'+l.completed+' <span class="muted">completed / '+l.responses+' total</span></td>'+
+            '<td><span class="mono">'+esc(link)+'</span> <span class="copy" data-link="'+esc(link)+'">Copy</span></td>'+
+            '<td><span class="copy" data-toggle="'+esc(l.code)+'" data-active="'+(l.active?'1':'0')+'">'+(l.active?'Disable':'Enable')+'</span></td></tr>';
+        }).join('')+'</tbody></table></div>':'')+
+      '</div>';
     body+='<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Invitations <span class="muted">('+invs.length+')</span></h3>'+
       (invs.length?'<button class="btn btn-ghost btn-sm" id="expInv">Export links CSV</button>':'')+'</div>'+
       '<div style="overflow:auto"><table><thead><tr><th>SAI</th><th>Status</th><th>Link</th></tr></thead><tbody>'+
@@ -292,7 +308,15 @@
       this.disabled=true; var self=this;
       api('/api/admin/invitations',{method:'POST',body:{survey_slug:current,items:items}}).then(function(){toast(items.length+' invitation(s) created');loadSurvey(current);}).catch(function(){toast('Error creating invitations');self.disabled=false;});
     };
-    [].forEach.call(document.querySelectorAll('.copy'),function(c){c.onclick=function(){navigator.clipboard.writeText(c.dataset.link);toast('Link copied');};});
+    document.getElementById('linkBtn').onclick=function(){
+      this.disabled=true; var self=this;
+      api('/api/admin/links',{method:'POST',body:{survey_slug:current,label:document.getElementById('linkLabel').value}}).then(function(){toast('General link created');loadSurvey(current);}).catch(function(){toast('Error creating link');self.disabled=false;});
+    };
+    [].forEach.call(document.querySelectorAll('[data-toggle]'),function(c){c.onclick=function(){
+      var enable=c.dataset.active!=='1';
+      api('/api/admin/links/active',{method:'POST',body:{code:c.dataset.toggle,active:enable}}).then(function(){toast(enable?'Link enabled':'Link disabled');loadSurvey(current);}).catch(function(){toast('Error updating link');});
+    };});
+    [].forEach.call(document.querySelectorAll('.copy[data-link]'),function(c){c.onclick=function(){navigator.clipboard.writeText(c.dataset.link);toast('Link copied');};});
     var ei=document.getElementById('expInv');
     if(ei)ei.onclick=function(){
       var lines=[['SAI','Arabic name','Country','Email','Status','Link']];

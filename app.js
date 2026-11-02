@@ -1,6 +1,6 @@
 /* SAI Egypt Survey Platform — survey app.
  * Shared by survey.html and 404.html (GitHub Pages serves 404.html for the
- * deep links /i/TOKEN and /s/SLUG, so the router below decides what to show).
+ * deep links /i/TOKEN, /s/SLUG and /c/CODE, so the router below decides what to show).
  * The API base URL comes from config.js (window.SURVEY_API). */
 (function(){
   "use strict";
@@ -407,6 +407,7 @@
     }
     function postResponse(complete){
       var payload={ survey_slug:SURVEY.slug, token:(CTX.invitation&&CTX.invitation.token)||null,
+        code:(CTX.link&&CTX.link.code)||null,
         draft_key:getDraftKey(), lang:state.lang, answers:state.answers, is_complete:complete };
       return fetch(API+'/api/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){ if(!r.ok) throw new Error('save failed'); return r.json(); });
@@ -500,9 +501,10 @@
   }
 
   function boot(){
-    var m = location.pathname.match(/^\/(i|s)\/([^\/]+)\/?$/);
+    var m = location.pathname.match(/^\/(i|s|c)\/([^\/]+)\/?$/);
     if(!m){ notFound(true); return; }
-    var url = API + (m[1] === 'i' ? '/api/invitation/' : '/api/survey/') + encodeURIComponent(decodeURIComponent(m[2]));
+    var base = { i: '/api/invitation/', s: '/api/survey/', c: '/api/link/' }[m[1]];
+    var url = API + base + encodeURIComponent(decodeURIComponent(m[2]));
     fetch(url, { headers: { 'Accept': 'application/json' } }).then(function(r){
       if(r.status === 404){ notFound(false); return null; }
       if(!r.ok) throw new Error('http ' + r.status);
