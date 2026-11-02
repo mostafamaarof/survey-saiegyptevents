@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Survey Admin · SAI Egypt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0a2540;--ink-soft:#28415f;--blue:#135ca8;--blue-strong:#0f4e8f;--sky:#2b9ef0;
+    --sky-light:#e8f3fd;--sky-tint:#f4f9fe;--line:#d7e3f0;--line-soft:#e9f0f8;--bg:#eef4fb;
+    --surface:#fff;--muted:#607a96;--ok:#1f9d6b;--warn:#c7702a;--err:#cf3b4d;
+    --shadow:0 1px 2px rgba(10,37,64,.04),0 8px 30px rgba(10,37,64,.07);--serif:"Source Serif 4",serif;--sans:"Inter",system-ui,sans-serif}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);color:var(--ink);background:var(--bg);min-height:100vh;line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue);text-decoration:none}
+  .serif{font-family:var(--serif)}
+  /* login */
+  .login{min-height:100vh;display:grid;place-items:center;padding:22px;
+    background-image:radial-gradient(900px 500px at 80% 0%,rgba(43,158,240,.12),transparent 60%)}
+  .login .box{background:#fff;border:1px solid var(--line);border-radius:18px;padding:40px 36px;box-shadow:var(--shadow);width:100%;max-width:380px;text-align:center}
+  .login .mark{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--blue),var(--sky));display:grid;place-items:center;color:#fff;font-family:var(--serif);font-weight:700;font-size:25px;margin:0 auto 20px}
+  .login h1{font-family:var(--serif);font-size:22px;margin-bottom:6px}
+  .login p{color:var(--muted);font-size:13.5px;margin-bottom:22px}
+  input,textarea{font-family:inherit;font-size:14.5px;color:var(--ink);background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:11px 13px;width:100%;transition:.16s}
+  input:focus,textarea:focus{outline:none;border-color:var(--sky);box-shadow:0 0 0 4px var(--sky-light)}
+  .btn{font-family:var(--sans);font-size:14px;font-weight:600;border-radius:10px;padding:11px 20px;cursor:pointer;border:1.5px solid transparent;transition:.16s;display:inline-flex;align-items:center;gap:8px;justify-content:center}
+  .btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue-strong)}
+  .btn-ghost{background:#fff;color:var(--ink-soft);border-color:var(--line)}.btn-ghost:hover{background:var(--sky-tint)}
+  .btn-sm{padding:7px 13px;font-size:12.5px;border-radius:8px}
+  .btn:disabled{opacity:.5;cursor:default}
+  .err{color:var(--err);font-size:13px;margin-top:10px;min-height:18px}
+  /* app */
+  header{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  .hd{max-width:1180px;margin:0 auto;padding:13px 24px;display:flex;align-items:center;gap:13px}
+  .hd .mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--sky));display:grid;place-items:center;color:#fff;font-family:var(--serif);font-weight:700}
+  .hd b{font-size:15px}.hd .sp{flex:1}
+  select{font-family:inherit;font-size:14px;border:1.5px solid var(--line);border-radius:10px;padding:9px 12px;background:#fff;color:var(--ink);cursor:pointer}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 24px 80px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:24px}
+  .tabs button{border:0;background:none;font-family:inherit;font-size:14px;font-weight:600;color:var(--muted);padding:11px 16px;cursor:pointer;border-bottom:2.5px solid transparent;margin-bottom:-1px}
+  .tabs button.on{color:var(--blue);border-color:var(--blue)}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:28px}
+  .tile{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
+  .tile .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:8px}
+  .tile .v{font-family:var(--serif);font-size:30px;font-weight:700;line-height:1}
+  .tile .v small{font-size:15px;color:var(--muted);font-weight:400}
+  .tile.accent{background:linear-gradient(135deg,var(--blue),var(--sky));border:0;color:#fff}
+  .tile.accent .k{color:rgba(255,255,255,.8)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px 24px;box-shadow:var(--shadow);margin-bottom:18px}
+  .card h3{font-family:var(--serif);font-size:16px;margin-bottom:4px}
+  .card .qtext{font-size:14px;color:var(--ink-soft);margin-bottom:14px;font-weight:500}
+  .bar-row{display:flex;align-items:center;gap:12px;margin-bottom:9px;font-size:13.5px}
+  .bar-row .bl{flex:0 0 42%;color:var(--ink-soft)}
+  .bar-row .bt{flex:1;background:var(--line-soft);border-radius:6px;height:22px;overflow:hidden;position:relative}
+  .bar-row .bf{height:100%;background:linear-gradient(90deg,var(--blue),var(--sky));border-radius:6px;min-width:2px;transition:width .5s}
+  .bar-row .bn{flex:none;font-weight:600;font-size:13px;min-width:54px;text-align:end;color:var(--ink)}
+  .txtlist{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto}
+  .txtlist .ti{background:var(--sky-tint);border:1px solid var(--line-soft);border-radius:9px;padding:9px 12px;font-size:13.5px;color:var(--ink-soft)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:start;padding:10px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600}
+  .pill.pending{background:#eef2f7;color:#6b7f96}
+  .pill.started{background:#fff3e2;color:var(--warn)}
+  .pill.completed{background:#e4f6ee;color:var(--ok)}
+  .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
+  .copy{cursor:pointer;color:var(--blue);font-size:12px;font-weight:600}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:620px){.grid2{grid-template-columns:1fr}.bar-row .bl{flex-basis:34%}}
+  label.fl{font-size:12.5px;font-weight:600;color:var(--ink-soft);display:block;margin-bottom:5px}
+  .muted{color:var(--muted);font-size:13px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 20px;border-radius:999px;font-size:13.5px;opacity:0;transition:.3s;z-index:60;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<script src="/config.js"></script>
+<script>
+(function(){
+  "use strict";
+  var API=String(window.SURVEY_API||'').replace(/\/+$/,'');
+  var app=document.getElementById('app');
+  var TOKEN=sessionStorage.getItem('scei_admin_token')||'';
+  var DATA=null, current=null, tab='overview';
+
+  function api(path,opts){
+    opts=opts||{}; opts.headers=opts.headers||{};
+    opts.headers['Authorization']='Bearer '+TOKEN;
+    if(opts.body){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body);}
+    return fetch(API+path,opts).then(function(r){ if(r.status===401){logout();throw new Error('unauthorized');} if(!r.ok) throw new Error('http '+r.status); return r.json(); });
+  }
+  function logout(){ sessionStorage.removeItem('scei_admin_token'); TOKEN=''; renderLogin(); }
+  function toast(m){var e=document.getElementById('toast');e.textContent=m;e.classList.add('show');setTimeout(function(){e.classList.remove('show');},2200);}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- login ---------- */
+  function renderLogin(msg){
+    app.innerHTML='<div class="login"><div class="box">'+
+      '<div class="mark serif">S</div><h1 class="serif">Survey Administration</h1>'+
+      '<p>Enter your administrator access token to continue.</p>'+
+      '<input id="tok" type="password" placeholder="Admin token" autocomplete="current-password">'+
+      '<div class="err" id="loginErr">'+(msg||'')+'</div>'+
+      '<button class="btn btn-primary" id="loginBtn" style="width:100%;margin-top:6px">Sign in</button>'+
+      '</div></div>';
+    var go=function(){ TOKEN=document.getElementById('tok').value.trim(); if(!TOKEN)return;
+      sessionStorage.setItem('scei_admin_token',TOKEN);
+      document.getElementById('loginBtn').disabled=true;
+      boot().catch(function(){ document.getElementById('loginErr').textContent='Invalid token. Please try again.'; var b=document.getElementById('loginBtn'); if(b)b.disabled=false; });
+    };
+    document.getElementById('loginBtn').onclick=go;
+    document.getElementById('tok').addEventListener('keydown',function(e){if(e.key==='Enter')go();});
+  }
+
+  /* ---------- boot ---------- */
+  function boot(){
+    return api('/api/admin/bootstrap').then(function(d){
+      DATA=d; if(!current && d.surveys.length) current=d.surveys[0].slug;
+      return loadSurvey(current);
+    });
+  }
+  function loadSurvey(slug){
+    if(!slug){ DATA.detail=null; renderApp(); return Promise.resolve(); }
+    return api('/api/admin/survey/'+slug).then(function(d){ DATA.detail=d; current=slug; renderApp(); });
+  }
+
+  /* ---------- shell ---------- */
+  function renderApp(){
+    var opts=DATA.surveys.map(function(s){return '<option value="'+esc(s.slug)+'"'+(s.slug===current?' selected':'')+'>'+esc(s.title)+'</option>';}).join('');
+    app.innerHTML=
+      '<header><div class="hd"><div class="mark serif">S</div><b>Survey Administration</b>'+
+        '<span class="sp"></span>'+
+        (DATA.surveys.length?'<select id="surveySel">'+opts+'</select>':'')+
+        '<button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button>'+
+      '</div></header><div class="wrap" id="wrap"></div>';
+    document.getElementById('logoutBtn').onclick=logout;
+    var sel=document.getElementById('surveySel'); if(sel) sel.onchange=function(){loadSurvey(this.value);};
+    renderBody();
+  }
+
+  function renderBody(){
+    var wrap=document.getElementById('wrap');
+    if(!DATA.surveys.length){ wrap.innerHTML='<div class="card"><p class="muted">No surveys found yet. The default questionnaire is seeded automatically on first visit to the site.</p></div>'; return; }
+    var d=DATA.detail; if(!d){wrap.innerHTML='';return;}
+    wrap.innerHTML='<div class="tabs">'+
+      tabBtn('overview','Overview')+tabBtn('responses','Responses')+tabBtn('invitations','Invitations')+
+      '</div><div id="tabBody"></div>';
+    [].forEach.call(wrap.querySelectorAll('.tabs button'),function(b){b.onclick=function(){tab=b.dataset.t;renderBody();};});
+    if(tab==='overview')renderOverview(d);
+    else if(tab==='responses')renderResponses(d);
+    else renderInvitations(d);
+  }
+  function tabBtn(id,label){return '<button data-t="'+id+'" class="'+(tab===id?'on':'')+'">'+label+'</button>';}
+
+  /* ---------- overview ---------- */
+  function renderOverview(d){
+    var invited=d.invitations.length;
+    var started=d.invitations.filter(function(i){return i.status==='started';}).length;
+    var completed=d.responses.filter(function(r){return r.is_complete;}).length;
+    var anon=d.responses.filter(function(r){return !r.invitation_id;}).length;
+    var rate= invited? Math.round(completed/invited*100):0;
+    var tiles='<div class="tiles">'+
+      tile('Invited', invited)+
+      tile('Started', d.responses.length - completed + started )+
+      tile('Completed', completed)+
+      '<div class="tile accent"><div class="k">Completion rate</div><div class="v">'+rate+'<small>%</small></div></div>'+
+    '</div>';
+    if(anon) tiles=tiles.replace('</div>\n','');
+    var body='';
+    var defs=flatten(d.definition);
+    var resp=d.responses;
+    defs.forEach(function(q){
+      body+=renderQStats(q,resp,d.definition.default_lang||'en');
+    });
+    document.getElementById('tabBody').innerHTML=tiles+body;
+    [].forEach.call(document.querySelectorAll('.bf'),function(b){var w=b.dataset.w;requestAnimationFrame(function(){b.style.width=w+'%';});});
+  }
+  function tile(k,v){return '<div class="tile"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>';}
+
+  function renderQStats(q,responses,lang){
+    var L=function(o){return o?(o[lang]||o.en||o.ar||''):'';};
+    var answered=responses.filter(function(r){return r.answers && r.answers[q.id]!=null && r.answers[q.id]!=='' && !(Array.isArray(r.answers[q.id])&&!r.answers[q.id].length);});
+    var head='<div class="card"><h3>'+esc(q.displayNum?('Q'+q.displayNum):'')+'</h3><div class="qtext">'+esc(L(q.label))+'</div>';
+    if(q.type==='single_choice'||q.type==='multiple_choice'||q.type==='yes_no'){
+      var opts = q.type==='yes_no'? [{value:'yes',label:{en:'Yes',ar:'نعم'}},{value:'no',label:{en:'No',ar:'لا'}}] : (q.options||[]).slice();
+      if(q.allow_other) opts.push({value:'__other__',label:{en:'Other',ar:'أخرى'}});
+      var counts={}; opts.forEach(function(o){counts[o.value]=0;});
+      responses.forEach(function(r){var v=r.answers&&r.answers[q.id];if(v==null)return;(Array.isArray(v)?v:[v]).forEach(function(x){if(counts[x]!=null)counts[x]++;});});
+      var max=Math.max(1,Math.max.apply(null,opts.map(function(o){return counts[o.value];})));
+      head+=opts.map(function(o){var c=counts[o.value];return bar(L(o.label),c,Math.round(c/max*100));}).join('');
+    } else if(q.type==='matrix'){
+      (q.rows||[]).forEach(function(row){
+        head+='<div style="font-weight:600;font-size:13px;margin:12px 0 6px;color:var(--ink-soft)">'+esc(L(row.label))+'</div>';
+        var counts={}; (q.columns||[]).forEach(function(c){counts[c.value]=0;});
+        responses.forEach(function(r){var v=r.answers&&r.answers[q.id];if(v&&v[row.value]!=null&&counts[v[row.value]]!=null)counts[v[row.value]]++;});
+        var max=Math.max(1,Math.max.apply(null,(q.columns||[]).map(function(c){return counts[c.value];})));
+        head+=(q.columns||[]).map(function(c){return bar(L(c.label),counts[c.value],Math.round(counts[c.value]/max*100));}).join('');
+      });
+    } else if(q.type==='ranking'){
+      var items=(q.items||[]).slice();
+      var scores={},appears={}; items.forEach(function(it){scores[it.value]=0;appears[it.value]=0;});
+      responses.forEach(function(r){var ord=r.answers&&r.answers[q.id];if(!Array.isArray(ord))return;
+        ord.forEach(function(v,i){if(scores[v]!=null){scores[v]+=(ord.length-i);appears[v]++;}});});
+      var ranked=items.slice().sort(function(a,b){return scores[b.value]-scores[a.value];});
+      var max=Math.max(1,Math.max.apply(null,items.map(function(it){return scores[it.value];})));
+      head+='<div class="muted" style="margin-bottom:10px">Weighted score (higher = ranked more important)</div>';
+      head+=ranked.map(function(it){return bar(L(it.label),scores[it.value],Math.round(scores[it.value]/max*100));}).join('');
+    } else {
+      // text
+      var texts=answered.map(function(r){var v=r.answers[q.id]; var ov=r.answers[q.id+'_followup']||r.answers[q.id+'__other']; return (v&&typeof v==='string')?v:(ov||'');}).filter(Boolean);
+      head+='<div class="muted" style="margin-bottom:10px">'+texts.length+' text response(s)</div>';
+      head+='<div class="txtlist">'+ (texts.length? texts.map(function(x){return '<div class="ti">'+esc(x)+'</div>';}).join('') : '<div class="muted">No responses yet.</div>') +'</div>';
+    }
+    return head+'</div>';
+  }
+  function bar(label,n,pct){
+    return '<div class="bar-row"><div class="bl">'+esc(label)+'</div><div class="bt"><div class="bf" data-w="'+pct+'" style="width:0"></div></div><div class="bn">'+n+'</div></div>';
+  }
+
+  /* ---------- responses ---------- */
+  function renderResponses(d){
+    var defs=flatten(d.definition);
+    var rows=d.responses.slice().sort(function(a,b){return (b.updated_at||'').localeCompare(a.updated_at||'');});
+    var body='<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:14px">'+
+      '<h3>Responses <span class="muted">('+rows.length+')</span></h3>'+
+      '<button class="btn btn-primary btn-sm" id="csvBtn">Export CSV</button></div>'+
+      '<div style="overflow:auto"><table><thead><tr><th>SAI / Source</th><th>Status</th><th>Updated</th><th>Language</th></tr></thead><tbody>'+
+      (rows.length? rows.map(function(r){
+        var src=r.sai_name? esc(r.sai_name):'<span class="muted">Anonymous</span>';
+        return '<tr><td>'+src+'</td><td><span class="pill '+(r.is_complete?'completed':'started')+'">'+(r.is_complete?'Completed':'Draft')+'</span></td><td class="mono">'+esc((r.updated_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc((r.lang||'').toUpperCase())+'</td></tr>';
+      }).join(''):'<tr><td colspan="4" class="muted">No responses yet.</td></tr>')+
+      '</tbody></table></div></div>';
+    document.getElementById('tabBody').innerHTML=body;
+    document.getElementById('csvBtn').onclick=function(){exportCSV(d,defs);};
+  }
+  function exportCSV(d,defs){
+    var lang=d.definition.default_lang||'en';
+    var L=function(o){return o?(o[lang]||o.en||''):'';};
+    var headers=['SAI','Focal point','Status','Language','Updated'];
+    defs.forEach(function(q){ headers.push('Q'+q.displayNum+' '+L(q.label).slice(0,60)); if(q.allow_other)headers.push('Q'+q.displayNum+' other'); if(q.followup)headers.push('Q'+q.displayNum+' followup'); });
+    var lines=[headers];
+    d.responses.forEach(function(r){
+      var row=[r.sai_name||'', (r.answers&&r.answers.q_focal)||'', r.is_complete?'Completed':'Draft', (r.lang||'').toUpperCase(), (r.updated_at||'')];
+      defs.forEach(function(q){
+        row.push(fmtAns(q,r.answers&&r.answers[q.id],L));
+        if(q.allow_other) row.push((r.answers&&r.answers[q.id+'__other'])||'');
+        if(q.followup) row.push((r.answers&&r.answers[q.id+'_followup'])||'');
+      });
+      lines.push(row);
+    });
+    var csv=lines.map(function(ln){return ln.map(csvCell).join(',');}).join('\r\n');
+    var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+    var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=current+'-responses.csv';a.click();
+  }
+  function fmtAns(q,v,L){
+    if(v==null)return'';
+    if(q.type==='matrix'){ if(typeof v!=='object')return''; return (q.rows||[]).map(function(row){var c=v[row.value];var cl=(q.columns||[]).filter(function(x){return x.value===c;})[0];return L(row.label)+': '+(cl?L(cl.label):'');}).join(' | '); }
+    if(q.type==='ranking'){ if(!Array.isArray(v))return''; var items=q.items||[]; return v.map(function(val,i){var it=items.filter(function(x){return x.value===val;})[0];return (i+1)+'. '+(it?L(it.label):val);}).join(' | '); }
+    if(Array.isArray(v)){ return v.map(function(val){ if(val==='__other__')return'Other'; var o=(q.options||[]).filter(function(x){return x.value===val;})[0]; return o?L(o.label):val; }).join(' | '); }
+    if(q.type==='single_choice'||q.type==='yes_no'){ var o=(q.options||[{value:'yes',label:{en:'Yes'}},{value:'no',label:{en:'No'}}]).filter(function(x){return x.value===v;})[0]; return o?L(o.label):v; }
+    return String(v);
+  }
+  function csvCell(s){ s=String(s==null?'':s); return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+
+  /* ---------- invitations ---------- */
+  function renderInvitations(d){
+    var invs=d.invitations.slice();
+    var origin=location.origin;
+    var body='<div class="card"><h3>Create invitations</h3><p class="muted" style="margin-bottom:14px">Each invitation generates a unique, login-free link for one SAI. Paste one SAI per line for bulk creation (format: <span class="mono">English name | Arabic name | Country | email</span> — only the English name is required).</p>'+
+      '<textarea id="bulk" rows="5" placeholder="Supreme Audit Institution of ...&#10;ديوان المحاسبة ... | ... "></textarea>'+
+      '<div class="row" style="margin-top:12px"><button class="btn btn-primary btn-sm" id="createBtn">Generate links</button></div></div>';
+    body+='<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Invitations <span class="muted">('+invs.length+')</span></h3>'+
+      (invs.length?'<button class="btn btn-ghost btn-sm" id="expInv">Export links CSV</button>':'')+'</div>'+
+      '<div style="overflow:auto"><table><thead><tr><th>SAI</th><th>Status</th><th>Link</th></tr></thead><tbody>'+
+      (invs.length? invs.map(function(i){
+        var link=origin+'/i/'+i.token;
+        return '<tr><td>'+esc(i.sai_name)+(i.sai_name_ar?'<br><span class="muted">'+esc(i.sai_name_ar)+'</span>':'')+'</td>'+
+          '<td><span class="pill '+i.status+'">'+i.status+'</span></td>'+
+          '<td><span class="mono">'+esc(link)+'</span> <span class="copy" data-link="'+esc(link)+'">Copy</span></td></tr>';
+      }).join(''):'<tr><td colspan="3" class="muted">No invitations yet.</td></tr>')+
+      '</tbody></table></div></div>';
+    document.getElementById('tabBody').innerHTML=body;
+    document.getElementById('createBtn').onclick=function(){
+      var lines=document.getElementById('bulk').value.split('\n').map(function(l){return l.trim();}).filter(Boolean);
+      if(!lines.length)return;
+      var items=lines.map(function(l){var p=l.split('|').map(function(x){return x.trim();});return {sai_name:p[0],sai_name_ar:p[1]||'',country:p[2]||'',contact_email:p[3]||''};});
+      this.disabled=true; var self=this;
+      api('/api/admin/invitations',{method:'POST',body:{survey_slug:current,items:items}}).then(function(){toast(items.length+' invitation(s) created');loadSurvey(current);}).catch(function(){toast('Error creating invitations');self.disabled=false;});
+    };
+    [].forEach.call(document.querySelectorAll('.copy'),function(c){c.onclick=function(){navigator.clipboard.writeText(c.dataset.link);toast('Link copied');};});
+    var ei=document.getElementById('expInv');
+    if(ei)ei.onclick=function(){
+      var lines=[['SAI','Arabic name','Country','Email','Status','Link']];
+      invs.forEach(function(i){lines.push([i.sai_name,i.sai_name_ar||'',i.country||'',i.contact_email||'',i.status,origin+'/i/'+i.token]);});
+      var csv=lines.map(function(ln){return ln.map(csvCell).join(',');}).join('\r\n');
+      var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=current+'-invitations.csv';a.click();
+    };
+  }
+
+  /* ---------- utils ---------- */
+  function flatten(def){ var n=0,out=[]; (def.sections||[]).forEach(function(s){(s.questions||[]).forEach(function(q){n++;q.displayNum=n;out.push(q);});}); return out; }
+
+  if(TOKEN){ boot().catch(function(){renderLogin();}); } else { renderLogin(); }
+})();
+</script>
+</body>
+</html>
