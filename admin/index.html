@@ -134,18 +134,45 @@
   var previewListener=null;
   function nowMs(){ return Date.now()+skew; }
 
+  function delay(ms){ return new Promise(function(res){ setTimeout(res,ms); }); }
+  // A no-cors GET resolves whenever the server answered at all, whatever CORS says.
+  // So: probe fails -> a real network failure; probe works -> the browser blocked the real request.
+  function probe(){ return fetch(API+'/',{mode:'no-cors',cache:'no-store'}).then(function(){return true;},function(){return false;}); }
+
+  // Resolves with the parsed JSON. Rejects with an Error that carries:
+  //   .status/.body  - the server answered with an HTTP error (the message is the server's own text)
+  //   .network, .kind ('network' | 'blocked') - no usable answer at all (message says which and why)
+  // Requests other than POST are retried once on a connection failure: browsers silently retry GETs on a dead
+  // keep-alive connection but not writes, and these calls are safe to repeat. POSTs are never repeated blindly.
   function api(path,opts){
     opts=opts||{}; opts.headers=opts.headers||{};
+    var method=(opts.method||'GET').toUpperCase();
     opts.headers['Authorization']='Bearer '+TOKEN;
     if(opts.body){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body);}
-    return fetch(API+path,opts).then(function(r){
-      return r.json().catch(function(){return {};}).then(function(j){
+    function send(){ return fetch(API+path,opts); }
+    return send().catch(function(first){
+      if(method==='POST') throw first;
+      return delay(400).then(send);
+    }).then(function(r){
+      return r.text().then(function(raw){
+        var j={}, text='';
+        try{ j=raw?JSON.parse(raw):{}; }catch(x){ text=raw.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,160); }
         if(r.status===401){ logout(); var e=new Error('unauthorized'); e.status=401; throw e; }
-        if(!r.ok){ var er=new Error(j.message||j.error||('HTTP '+r.status)); er.status=r.status; er.body=j; throw er; }
+        if(!r.ok){
+          var er=new Error(j.message||j.error||('HTTP '+r.status+(text?': '+text:'')));
+          er.status=r.status; er.body=j; throw er;
+        }
         if(j && j.server_now){ var sn=Date.parse(j.server_now); if(!isNaN(sn)) skew=sn-Date.now(); }
         return j;
       });
-    },function(){ var e=new Error('Cannot reach the server'); e.network=true; throw e; });
+    },function(){
+      return probe().then(function(reachable){
+        var e=new Error(reachable
+          ? 'The server is reachable, but the browser blocked this request ('+method+' '+path+'). Check the CORS settings, a browser extension or security software.'
+          : 'Network error: could not reach the server ('+method+' '+path+'). Check your internet connection and try again.');
+        e.network=true; e.kind=reachable?'blocked':'network'; throw e;
+      });
+    });
   }
   function logout(){ sessionStorage.removeItem('scei_admin_token'); TOKEN=''; ED=null; renderLogin(); }
   function toast(m,ms){var e=document.getElementById('toast');e.textContent=m;e.classList.add('show');setTimeout(function(){e.classList.remove('show');},ms||2200);}
@@ -205,8 +232,7 @@
       document.getElementById('loginBtn').disabled=true;
       boot().catch(function(e){
         var el=document.getElementById('loginErr');
-        if(el) el.textContent = e && e.network ? 'Cannot reach the server. Check your connection and try again.'
-          : (e && e.status===401) ? 'Invalid token. Please try again.' : 'Sign-in failed: '+errText(e);
+        if(el) el.textContent = (e && e.status===401) ? 'Invalid token. Please try again.' : errText(e);
         var b=document.getElementById('loginBtn'); if(b)b.disabled=false;
       });
     };
@@ -280,12 +306,27 @@
       '<div class="err" id="nsErr"></div>'+
       '<div class="row" style="margin-top:8px"><button class="btn btn-primary" id="nsGo">Create survey</button></div>');
     body.querySelector('#nsGo').onclick=function(){
-      var btn=this; btn.disabled=true;
-      api('/api/admin/survey',{method:'POST',body:{slug:body.querySelector('#nsSlug').value.trim(),title:{en:body.querySelector('#nsEn').value,ar:body.querySelector('#nsAr').value},duplicate_of:body.querySelector('#nsDup').value||undefined}})
+      var btn=this, err=body.querySelector('#nsErr'); err.textContent='';
+      var payload={slug:body.querySelector('#nsSlug').value.trim(),title:{en:body.querySelector('#nsEn').value,ar:body.querySelector('#nsAr').value},duplicate_of:body.querySelector('#nsDup').value||undefined};
+      if(DATA.surveys.some(function(s){return s.slug===payload.slug;})){ err.textContent='A survey with the slug "'+payload.slug+'" already exists.'; return; }
+      btn.disabled=true; btn.textContent='Creating…';
+      createSurvey(payload)
         .then(function(r){ closeModal(); return refreshList().then(function(){ ED=null; tab='questions'; return loadSurvey(r.slug); }); })
         .then(function(){ toast('Survey created (draft)'); })
-        .catch(function(e){ body.querySelector('#nsErr').textContent=errText(e); btn.disabled=false; });
+        .catch(function(e){ err.textContent=errText(e); btn.disabled=false; btn.textContent='Create survey'; });
     };
+  }
+  // A POST is not repeated blindly. After a connection failure we first look whether the survey was created
+  // (its slug was free a moment ago, so if it exists now the request did get through); only if it does not exist
+  // is the request sent once more.
+  function createSurvey(payload){
+    var post=function(){ return api('/api/admin/survey',{method:'POST',body:payload}); };
+    return post().catch(function(e){
+      if(!e.network) throw e;
+      return api('/api/admin/survey/'+encodeURIComponent(payload.slug)).then(
+        function(){ return {ok:true,slug:payload.slug}; },
+        function(e2){ if(e2.status===404) return post(); throw e; });
+    });
   }
 
   /* ---------- overview ---------- */
