@@ -148,3 +148,79 @@ export function checkCompatibility(oldDef, newDef) {
   }
   return problems;
 }
+
+// ─────────────────────────────────────────────────────────────
+// Answer formatting — ONE formatter shared by the respondent's printable summary (app.js)
+// and the admin CSV export, so both always describe an answer the same way.
+//
+//   answerLines(q, answers, lang, detail) -> string[]   ([] = unanswered)
+//   answerText(q, answers, lang, detail, sep) -> string ('' = unanswered)
+//   summarize(def, answers, lang) -> [{ title, questions: [{ num, id, type, kind, label, lines }] }]
+//
+// detail=false is the compact value used in one CSV cell (typed "Other" text and follow-ups have their own columns);
+// detail=true adds the typed "Other" text and the yes/no follow-up text, for the printable summary.
+// Hidden questions are skipped by summarize(); numbering matches what respondents saw (hidden ones are not counted).
+// ─────────────────────────────────────────────────────────────
+const WORDS = { en: { yes: 'Yes', no: 'No', other: 'Other' }, ar: { yes: 'نعم', no: 'لا', other: 'أخرى' } };
+const labelOf = (o, lang) => (o == null ? '' : typeof o === 'string' ? o : (o[lang] || o.en || o.ar || ''));
+const typed = v => (typeof v === 'string' ? v.trim() : '');
+
+export function answerLines(q, answers, lang = 'en', detail = false) {
+  const W = WORDS[lang] || WORDS.en, a = answers || {}, v = a[q.id];
+  const other = typed(a[q.id + '__other']);
+  const optLabel = (list, value) => { const o = (list || []).find(x => x.value === value); return o ? labelOf(o.label, lang) : String(value); };
+  const otherLine = () => (detail && other ? `${W.other}: ${other}` : W.other);
+
+  switch (q.type) {
+    case 'single_choice': {
+      if (v == null || v === '') return [];
+      return [v === '__other__' ? otherLine() : optLabel(q.options, v)];
+    }
+    case 'multiple_choice': {
+      const arr = Array.isArray(v) ? v.filter(x => x !== '' && x != null) : [];
+      return arr.map(x => (x === '__other__' ? otherLine() : optLabel(q.options, x)));
+    }
+    case 'ranking': {
+      const arr = Array.isArray(v) ? v : [];
+      return arr.map((x, i) => {
+        const it = (q.items || []).find(y => y.value === x);
+        const base = it ? labelOf(it.label, lang) : String(x);
+        return `${i + 1}. ${it && it.is_other && detail && other ? `${base}: ${other}` : base}`;
+      });
+    }
+    case 'yes_no': {
+      if (v !== 'yes' && v !== 'no') return [];
+      const lines = [W[v]];
+      const fu = typed(a[q.id + '_followup']);
+      if (detail && q.followup && v === (q.followup_if || 'yes') && fu) lines.push(`${labelOf(q.followup.label, lang)} ${a[q.id + '_followup'].trim()}`.trim());
+      return lines;
+    }
+    case 'matrix': {
+      const m = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+      if (!Object.keys(m).length) return [];
+      return (q.rows || []).map(r => `${labelOf(r.label, lang)}: ${m[r.value] != null ? optLabel(q.columns, m[r.value]) : (detail ? '—' : '')}`);
+    }
+    default: {   // short_text, long_text, email, phone
+      return typeof v === 'string' && v.trim() !== '' ? [v] : [];
+    }
+  }
+}
+
+export function answerText(q, answers, lang = 'en', detail = false, sep = ' | ') {
+  return answerLines(q, answers, lang, detail).join(sep);
+}
+
+export function summarize(def, answers, lang = 'en') {
+  let n = 0;
+  return ((def && def.sections) || []).map(s => ({
+    title: labelOf(s.title, lang),
+    questions: ((s && s.questions) || []).filter(q => !q.hidden).map(q => {
+      n++;
+      return {
+        num: n, id: q.id, type: q.type, label: labelOf(q.label, lang),
+        kind: ['short_text', 'long_text', 'email', 'phone'].includes(q.type) ? 'text' : q.type === 'ranking' ? 'ranking' : q.type === 'matrix' ? 'matrix' : 'list',
+        lines: answerLines(q, answers, lang, true)
+      };
+    })
+  })).filter(s => s.questions.length);
+}

@@ -25,7 +25,8 @@
            viewResp:"View my response", backSummary:"Done", cairo:"Cairo time",
            readonlyNote:"Read-only — the response period has ended.",
            closesIn:"Closes in",
-           previewNote:"PREVIEW — nothing is saved or sent", noQuestions:"This survey has no visible questions yet." },
+           previewNote:"PREVIEW — nothing is saved or sent", printHead:"Summary of responses", institution:"Institution",
+           submittedOn:"Submitted on", printedOn:"Printed on", printFail:"Could not prepare the printable summary", noQuestions:"This survey has no visible questions yet." },
       ar:{ start:"بدء الاستبيان", next:"التالي", back:"السابق", submit:"إرسال الردّ",
            saveLater:"حفظ والمتابعة لاحقًا", saved:"تم حفظ تقدّمك", section:"القسم",
            of:"من", welcome:"دعوة", required:"هذا السؤال مطلوب",
@@ -41,7 +42,8 @@
            viewResp:"عرض ردّي", backSummary:"تم", cairo:"بتوقيت القاهرة",
            readonlyNote:"للقراءة فقط — انتهت فترة الردّ.",
            closesIn:"يُغلق خلال",
-           previewNote:"معاينة — لا يتم حفظ أو إرسال أي شيء", noQuestions:"لا توجد أسئلة ظاهرة في هذا الاستبيان بعد." }
+           previewNote:"معاينة — لا يتم حفظ أو إرسال أي شيء", printHead:"ملخص الإجابات", institution:"الجهة",
+           submittedOn:"تاريخ ووقت الإرسال", printedOn:"تاريخ الطباعة", printFail:"تعذّر تجهيز ملخص الطباعة", noQuestions:"لا توجد أسئلة ظاهرة في هذا الاستبيان بعد." }
     };
 
     // Server clock offset, so countdowns do not depend on the respondent's own clock.
@@ -59,7 +61,8 @@
         return Object.assign({}, s, { questions: (s.questions || []).filter(function(q){ return !q.hidden; }) });
       }).filter(function(s){ return s.questions.length; }),
       submitted: !!CTX.already_complete,
-      viewing: false           // read-only walk-through of a submitted response after the deadline
+      viewing: false,          // read-only walk-through of a submitted response after the deadline
+      submittedAt: CTX.submitted_at || null
     };
     function readOnly(){ return !!(CTX.closed && state.submitted); }
     var SVG = {
@@ -211,7 +214,7 @@
 
       bindSection(sec, idx);
       var last = idx===total-1;
-      if(readOnly()){ applyReadOnly(); renderNav({back:true, nextLabel: last? t('backSummary'): t('next'), submit:false}); return; }
+      if(readOnly()){ applyReadOnly(); renderNav({back:true, nextLabel: last? t('backSummary'): t('next'), submit:false, printBtn:true}); return; }
       renderNav({back:true, nextLabel: last? t('submit'): t('next'), submit:last});
     }
 
@@ -444,6 +447,7 @@
       nav.innerHTML='<div class="navbar-inner">'+
         (opts.back?'<button class="btn btn-ghost nav-back" id="navBack"><span style="transform:rotate(180deg);display:inline-flex">'+SVG.arrow+'</span>'+t('back')+'</button>':'<span></span>')+
         saveBtn+
+        (opts.printBtn?'<button class="btn btn-ghost" id="navPrint">'+t('print')+'</button>':'')+
         '<span class="spacer"></span>'+
         '<span class="save-note" id="saveNote" style="opacity:0">'+SVG.disk+t('saved')+'</span>'+
         '<button class="btn btn-primary nav-next" id="navNext">'+esc(opts.nextLabel)+(opts.submit?'':' <span class="nav-next">'+SVG.arrow+'</span>')+'</button>'+
@@ -459,29 +463,55 @@
       if(bk) bk.addEventListener('click',function(){ if(state.step>0){state.step--;render();} });
       var sv=document.getElementById('navSave');
       if(sv) sv.addEventListener('click',function(){ saveNow(true); });
+      var np=document.getElementById('navPrint');
+      if(np) np.addEventListener('click',doPrint);
     }
 
     /* ---------- save / submit ---------- */
     var saveTimer=null, lastSaved=0;
     function scheduleSave(){
-      if(PREVIEW || readOnly()) return;
+      // After the final submission nothing may be saved as a draft: that would turn the completed response back into
+      // a draft (e.g. a pending autosave firing late, or switching language on the thank-you screen).
+      if(PREVIEW || readOnly() || state.submitted) return;
       try{ localStorage.setItem('scei_draft_'+SURVEY.slug, JSON.stringify({answers:state.answers,lang:state.lang,ts:Date.now()})); }catch(e){}
       if(CTX.mode!=='invitation') return;
       clearTimeout(saveTimer);
       saveTimer=setTimeout(function(){ saveNow(false); }, 1500);
     }
     function saveNow(announce){
+      if(state.submitted) return;
       if(CTX.mode!=='invitation'){ if(announce) toast(t('saved')); return; }
       postResponse(false).then(function(){
         if(announce){ toast(t('saved')); }
         var n=document.getElementById('saveNote'); if(n){n.style.opacity=1;setTimeout(function(){n.style.opacity=0;},1800);}
       }).catch(function(){});
     }
+    // Saves are sent strictly one after another, so a draft autosave can never overtake (and overwrite) the final submission.
+    var postQueue=Promise.resolve();
     function postResponse(complete){
+      var job=postQueue.then(function(){ return sendResponse(complete); });
+      postQueue=job.catch(function(){});
+      return job;
+    }
+    function sendResponse(complete){
       var payload={ survey_slug:SURVEY.slug, token:(CTX.invitation&&CTX.invitation.token)||null,
         code:(CTX.link&&CTX.link.code)||null,
         draft_key:getDraftKey(), lang:state.lang, answers:state.answers, is_complete:complete };
-      return fetch(API+'/api/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      // A save has a time limit (a hung connection must not leave "Submitting…" on screen forever) and is tried once more
+      // after a connection failure. That is safe: the server stores a response by invitation token / draft key, so sending
+      // the same answers twice updates the same response instead of creating another one.
+      var body=JSON.stringify(payload), canRetry=!!(payload.token||payload.draft_key);
+      var limit=window.SURVEY_SAVE_TIMEOUT_MS||20000;
+      function attempt(){
+        var ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+        var timer=ctl?setTimeout(function(){ ctl.abort(); },limit):null;
+        return fetch(API+'/api/response',{method:'POST',headers:{'Content-Type':'application/json'},body:body,signal:ctl?ctl.signal:undefined})
+          .then(function(r){ clearTimeout(timer); return r; },function(e){ clearTimeout(timer); throw e; });
+      }
+      return attempt().catch(function(e){
+          if(!canRetry) throw e;
+          return new Promise(function(res){ setTimeout(res,600); }).then(attempt);
+        })
         .then(function(r){
           if(r.status===403){
             return r.json().catch(function(){ return {}; }).then(function(j){
@@ -500,10 +530,11 @@
     }
     function doSubmit(){
       if(!validateSection(state.step-1)) return;
-      if(PREVIEW){ state.submitted=true; state.step=state.sections.length+1; render(); return; }
+      if(PREVIEW){ state.submitted=true; state.submittedAt=new Date(nowMs()).toISOString(); state.step=state.sections.length+1; render(); return; }
       var nx=document.getElementById('navNext'); if(nx){nx.disabled=true;nx.textContent=t('reviewSubmitting');}
+      clearTimeout(saveTimer);                         // a pending draft autosave must not follow the submission
       postResponse(true).then(function(){
-        state.submitted=true;
+        state.submitted=true; state.submittedAt=new Date(nowMs()).toISOString();
         try{ localStorage.removeItem('scei_draft_'+SURVEY.slug);}catch(e){}
         state.step=state.sections.length+1; render();
       }).catch(function(e){
@@ -511,6 +542,66 @@
         if(nx){nx.disabled=false;nx.textContent=t('submit');}
         toast(state.lang==='ar'?'تعذّر الإرسال، حاول مرة أخرى':'Submission failed, please retry');
       });
+    }
+
+    /* ---------- printable summary of the respondent's answers ---------- */
+    // The answer formatter is shared with the admin CSV export and lives in /definition.js (loaded on demand).
+    var defMod = null;
+    function loadDef(){
+      if(!defMod) defMod = import('/definition.js').catch(function(e){ defMod = null; throw e; });
+      return defMod;
+    }
+    function doPrint(){
+      loadDef().then(function(m){ buildPrintSummary(m); window.print(); }, function(){ toast(t('printFail')); });
+    }
+    // Date and time in Cairo time, in the respondent's current language.
+    function fmtCairoDT(iso){
+      try{
+        var d=new Date(iso); if(isNaN(d.getTime())) return '';
+        var loc=state.lang==='ar'?'ar-EG':'en-GB';
+        var date=d.toLocaleDateString(loc,{timeZone:'Africa/Cairo',year:'numeric',month:'long',day:'numeric'});
+        var time=d.toLocaleTimeString(loc,{timeZone:'Africa/Cairo',hour:'2-digit',minute:'2-digit'})+' ('+t('cairo')+')';
+        return state.lang==='ar' ? date+'\u060c \u2067'+time+'\u2069' : date+', '+time;
+      }catch(e){ return ''; }
+    }
+    function answerHtml(q){
+      if(!q.lines.length) return '<div class="ps-a ps-none">—</div>';
+      if(q.kind==='text'){
+        // Latin values (email, phone) are isolated so an Arabic page does not print "+20 100 555 0101" as "0101 555 100 20+";
+        // free text takes its direction from its own first letters (an English answer inside an Arabic survey).
+        var v=esc(q.lines[0]);
+        if(q.type==='email'||q.type==='phone') return '<div class="ps-a"><bdi dir="ltr">'+v+'</bdi></div>';
+        return '<div class="ps-a" dir="auto">'+v+'</div>';
+      }
+      var bullet = q.kind==='list' && q.lines.length>1;
+      return q.lines.map(function(ln){ return '<div class="ps-a'+(bullet?' ps-b':'')+'">'+esc(ln)+'</div>'; }).join('');
+    }
+    // Builds a print-only block (hidden on screen). Nothing here contains the link or token of the respondent.
+    function buildPrintSummary(m){
+      var old=document.getElementById('printSummary'); if(old) old.remove();
+      var rtl=state.lang==='ar';
+      var inv=CTX.invitation, name='';
+      if(inv) name = rtl ? (inv.sai_name_ar||inv.sai_name) : inv.sai_name;
+      if(!name && typeof state.answers.q_sai==='string') name = state.answers.q_sai.trim();
+      var when=state.submittedAt, whenLabel=t('submittedOn');
+      if(!when){ when=new Date(nowMs()).toISOString(); whenLabel=t('printedOn'); }
+      var rows='';
+      m.summarize(SURVEY, state.answers, state.lang).forEach(function(sec){
+        sec.questions.forEach(function(q,i){
+          rows += '<tr><td class="ps-q">'+(i===0?'<div class="ps-sec">'+esc(sec.title)+'</div>':'')+
+            '<div class="ps-qb"><div class="ps-ql"><span class="ps-n">'+q.num+'.</span> '+esc(q.label)+'</div>'+answerHtml(q)+'</div></td></tr>';
+        });
+      });
+      var el=document.createElement('section');
+      el.id='printSummary'; el.className='print-only'; el.setAttribute('dir', rtl?'rtl':'ltr'); el.setAttribute('lang', state.lang);
+      el.innerHTML =
+        '<table class="ps-table"><thead><tr><td><div class="ps-pad"></div></td></tr></thead>'+
+        '<tfoot><tr><td><div class="ps-pad"></div></td></tr></tfoot><tbody>'+
+        '<tr><td class="ps-head"><h1 class="ps-title">'+esc(L(SURVEY.title))+'</h1><div class="ps-sub">'+esc(t('printHead'))+'</div>'+
+          '<div class="ps-meta">'+(name?'<div><b>'+esc(t('institution'))+'</b> <bdi>'+esc(name)+'</bdi></div>':'')+
+          '<div><b>'+esc(whenLabel)+'</b> '+esc(fmtCairoDT(when))+'</div></div></td></tr>'+
+        rows+'</tbody></table>';
+      document.body.appendChild(el);
     }
 
     function renderThankYou(){
@@ -521,11 +612,14 @@
         '<h2 class="serif">'+esc(L(ty.title)||'Thank you')+'</h2>'+
         (L(ty.body)?'<p>'+esc(L(ty.body))+'</p>':'')+
         '<div class="actions">'+
-          '<button class="btn btn-ghost" onclick="window.print()">'+t('print')+'</button>'+
+          '<button class="btn btn-ghost" id="printBtn">'+t('print')+'</button>'+
           (CTX.mode==='invitation' && !CTX.closed?'<button class="btn btn-text" id="editBtn">'+t('edit')+'</button>':'')+
           (readOnly()?'<button class="btn btn-text" id="viewBtn">'+t('viewResp')+'</button>':'')+
         '</div></div></div>';
       document.getElementById('progressFill').style.width='100%';
+      loadDef().catch(function(){});                  // preload the shared formatter so printing is instant
+      var pb=document.getElementById('printBtn');
+      if(pb) pb.addEventListener('click',doPrint);
       var vb=document.getElementById('viewBtn');
       if(vb) vb.addEventListener('click',function(){ state.step=1; render(); });
       var eb=document.getElementById('editBtn');

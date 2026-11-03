@@ -433,6 +433,8 @@
     document.getElementById('csvBtn').onclick=function(){exportCSV(d,defs);};
   }
   function exportCSV(d,defs){
+    // answers are formatted by the same shared formatter as the respondent's printable summary (site/definition.js)
+    if(!DefCheck){ toast('The export needs /definition.js — reload the page and try again',4000); return; }
     var lang=d.definition.default_lang||'en';
     var L=function(o){return o?(o[lang]||o.en||''):'';};
     var headers=['SAI','Focal point','Status','Language','Updated'];
@@ -441,7 +443,7 @@
     d.responses.forEach(function(r){
       var row=[r.sai_name||'', (r.answers&&r.answers.q_focal)||'', r.is_complete?'Completed':'Draft', (r.lang||'').toUpperCase(), (r.updated_at||'')];
       defs.forEach(function(q){
-        row.push(fmtAns(q,r.answers&&r.answers[q.id],L));
+        row.push(DefCheck.answerText(q,r.answers||{},lang));
         if(q.allow_other) row.push((r.answers&&r.answers[q.id+'__other'])||'');
         if(q.followup) row.push((r.answers&&r.answers[q.id+'_followup'])||'');
       });
@@ -450,14 +452,6 @@
     var csv=lines.map(function(ln){return ln.map(csvCell).join(',');}).join('\r\n');
     var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
     var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=current+'-responses.csv';a.click();
-  }
-  function fmtAns(q,v,L){
-    if(v==null)return'';
-    if(q.type==='matrix'){ if(typeof v!=='object')return''; return (q.rows||[]).map(function(row){var c=v[row.value];var cl=(q.columns||[]).filter(function(x){return x.value===c;})[0];return L(row.label)+': '+(cl?L(cl.label):'');}).join(' | '); }
-    if(q.type==='ranking'){ if(!Array.isArray(v))return''; var items=q.items||[]; return v.map(function(val,i){var it=items.filter(function(x){return x.value===val;})[0];return (i+1)+'. '+(it?L(it.label):val);}).join(' | '); }
-    if(Array.isArray(v)){ return v.map(function(val){ if(val==='__other__')return'Other'; var o=(q.options||[]).filter(function(x){return x.value===val;})[0]; return o?L(o.label):val; }).join(' | '); }
-    if(q.type==='single_choice'||q.type==='yes_no'){ var o=(q.options||[{value:'yes',label:{en:'Yes'}},{value:'no',label:{en:'No'}}]).filter(function(x){return x.value===v;})[0]; return o?L(o.label):v; }
-    return String(v);
   }
   function csvCell(s){ s=String(s==null?'':s); return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
 
