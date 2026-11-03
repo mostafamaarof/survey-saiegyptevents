@@ -75,6 +75,45 @@
   .muted{color:var(--muted);font-size:13px}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 20px;border-radius:999px;font-size:13.5px;opacity:0;transition:.3s;z-index:60;pointer-events:none}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* ---- survey management ---- */
+  .pill.closed{background:#fde8ea;color:var(--err)}
+  .copy.danger-t{color:var(--err)}
+  select{max-width:100%}
+  .chk{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink-soft);cursor:pointer}
+  .chk input{width:auto;accent-color:var(--blue)}
+  input[type=datetime-local]{width:auto}
+  .banner{border-radius:12px;padding:12px 16px;font-size:13.5px;margin-bottom:16px;border:1px solid var(--line)}
+  .banner ul{margin:6px 0 0 18px}
+  .warn-b{background:#fff7ec;border-color:#f3d9b8;color:#7a4a14}
+  .err-b{background:#fdecee;border-color:#f1c2c8;color:#8c2433}
+  .info-b{background:var(--sky-tint);border-color:var(--line);color:var(--ink-soft)}
+  .statusbar{padding:14px 20px}
+  .modal-bg{position:fixed;inset:0;background:rgba(10,37,64,.45);z-index:70;display:grid;place-items:center;padding:20px}
+  .modal{background:#fff;border-radius:16px;box-shadow:0 24px 70px rgba(10,37,64,.35);width:100%;max-width:520px;max-height:92vh;display:flex;flex-direction:column}
+  .modal.wide{max-width:1000px;height:90vh}
+  .modal-hd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
+  .modal-hd h3{font-size:17px}
+  .modal-body{padding:18px 20px;overflow:auto;flex:1;min-height:0}
+  .modal.wide .modal-body{padding:0;display:flex}
+  .modal-body iframe{flex:1;width:100%;height:100%;border:0;border-radius:0 0 16px 16px;background:var(--bg)}
+  .ed-bar{position:sticky;top:61px;z-index:15;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--bg);padding:10px 0 12px}
+  .ed-sec{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:18px}
+  .ed-sec-hd,.ed-q-hd{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .ed-sec-hd .sp,.ed-q-hd .sp{flex:1}
+  .ed-q{background:var(--sky-tint);border:1px solid var(--line-soft);border-radius:12px;padding:12px 14px;margin-top:12px}
+  .ed-q.is-hidden{opacity:.65;border-style:dashed}
+  .q-n{font-family:var(--serif);font-weight:700;color:var(--blue)}
+  .ed-list{margin-top:10px;padding:10px 12px;background:#fff;border:1px solid var(--line-soft);border-radius:10px}
+  .ed-list-hd{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;margin-bottom:8px}
+  .ed-ent{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .ed-ent input[data-bind]:not([type=checkbox]){flex:1;min-width:140px}
+  .ib{border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:8px;padding:5px 10px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+  .ib:hover:not(:disabled){background:var(--sky-tint)}
+  .ib:disabled{opacity:.4;cursor:not-allowed}
+  .ib.danger{color:var(--err)}
+  details>summary{cursor:pointer}
+  #verBox table td,#verBox table th{padding:8px 10px}
 </style>
 </head>
 <body>
@@ -89,15 +128,68 @@
   var TOKEN=sessionStorage.getItem('scei_admin_token')||'';
   var DATA=null, current=null, tab='overview';
 
+  var DefCheck=null;            // /definition.js — the validator shared with the Worker
+  var skew=0;                   // server clock minus browser clock, learned from API responses
+  var ED=null;                  // question-editor state (kept while switching tabs)
+  var previewListener=null;
+  function nowMs(){ return Date.now()+skew; }
+
   function api(path,opts){
     opts=opts||{}; opts.headers=opts.headers||{};
     opts.headers['Authorization']='Bearer '+TOKEN;
     if(opts.body){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body);}
-    return fetch(API+path,opts).then(function(r){ if(r.status===401){logout();throw new Error('unauthorized');} if(!r.ok) throw new Error('http '+r.status); return r.json(); });
+    return fetch(API+path,opts).then(function(r){
+      return r.json().catch(function(){return {};}).then(function(j){
+        if(r.status===401){ logout(); var e=new Error('unauthorized'); e.status=401; throw e; }
+        if(!r.ok){ var er=new Error(j.message||j.error||('HTTP '+r.status)); er.status=r.status; er.body=j; throw er; }
+        if(j && j.server_now){ var sn=Date.parse(j.server_now); if(!isNaN(sn)) skew=sn-Date.now(); }
+        return j;
+      });
+    },function(){ var e=new Error('Cannot reach the server'); e.network=true; throw e; });
   }
-  function logout(){ sessionStorage.removeItem('scei_admin_token'); TOKEN=''; renderLogin(); }
-  function toast(m){var e=document.getElementById('toast');e.textContent=m;e.classList.add('show');setTimeout(function(){e.classList.remove('show');},2200);}
+  function logout(){ sessionStorage.removeItem('scei_admin_token'); TOKEN=''; ED=null; renderLogin(); }
+  function toast(m,ms){var e=document.getElementById('toast');e.textContent=m;e.classList.add('show');setTimeout(function(){e.classList.remove('show');},ms||2200);}
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function errText(e){ return (e && e.message) || 'Unexpected error'; }
+
+  /* ---------- Cairo time helpers ---------- */
+  function cparts(iso,monthStyle){
+    var d=new Date(iso); if(isNaN(d.getTime())) return null; var p={};
+    new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Cairo',year:'numeric',month:monthStyle||'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})
+      .formatToParts(d).forEach(function(x){p[x.type]=x.value;});
+    return p;
+  }
+  function fmtCairo(iso){ var p=cparts(iso,'short'); return p? p.day+' '+p.month+' '+p.year+', '+p.hour+':'+p.minute+' (Cairo)' : ''; }
+  function cairoInput(iso){ var p=cparts(iso); return p? p.year+'-'+p.month+'-'+p.day+'T'+p.hour+':'+p.minute : ''; }
+  // { cls, text } describing whether a survey currently accepts responses.
+  function statusInfo(sv){
+    if(sv.status==='draft') return {cls:'pending',text:'Draft — not accepting responses'};
+    if(sv.status==='closed') return {cls:'closed',text:'Closed manually'};
+    if(sv.deadline){
+      var ms=Date.parse(sv.deadline)-nowMs();
+      if(ms<0) return {cls:'closed',text:'Closed — deadline passed on '+fmtCairo(sv.deadline)};
+      var days=Math.ceil(ms/864e5), hrs=Math.max(1,Math.ceil(ms/36e5));
+      return {cls:'completed',text:'Open — closes in '+(ms<864e5? hrs+' hour'+(hrs===1?'':'s') : days+' day'+(days===1?'':'s'))+' ('+fmtCairo(sv.deadline)+')'};
+    }
+    return {cls:'completed',text:'Open — no deadline'};
+  }
+  function statusPill(sv){ var s=statusInfo(sv); return '<span class="pill '+s.cls+'">'+esc(s.text)+'</span>'; }
+
+  /* ---------- modal ---------- */
+  function openModal(title,bodyHtml,wide){
+    closeModal();
+    var bg=document.createElement('div'); bg.className='modal-bg'; bg.id='modalBg';
+    bg.innerHTML='<div class="modal'+(wide?' wide':'')+'"><div class="modal-hd"><h3 class="serif">'+esc(title)+'</h3><button class="btn btn-ghost btn-sm" id="modalX">Close</button></div><div class="modal-body">'+bodyHtml+'</div></div>';
+    document.body.appendChild(bg);
+    bg.addEventListener('mousedown',function(e){ if(e.target===bg) closeModal(); });
+    document.getElementById('modalX').onclick=closeModal;
+    return bg.querySelector('.modal-body');
+  }
+  function closeModal(){
+    var b=document.getElementById('modalBg'); if(b) b.remove();
+    if(previewListener){ window.removeEventListener('message',previewListener); previewListener=null; }
+  }
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeModal(); });
 
   /* ---------- login ---------- */
   function renderLogin(msg){
@@ -111,51 +203,90 @@
     var go=function(){ TOKEN=document.getElementById('tok').value.trim(); if(!TOKEN)return;
       sessionStorage.setItem('scei_admin_token',TOKEN);
       document.getElementById('loginBtn').disabled=true;
-      boot().catch(function(){ document.getElementById('loginErr').textContent='Invalid token. Please try again.'; var b=document.getElementById('loginBtn'); if(b)b.disabled=false; });
+      boot().catch(function(e){
+        var el=document.getElementById('loginErr');
+        if(el) el.textContent = e && e.network ? 'Cannot reach the server. Check your connection and try again.'
+          : (e && e.status===401) ? 'Invalid token. Please try again.' : 'Sign-in failed: '+errText(e);
+        var b=document.getElementById('loginBtn'); if(b)b.disabled=false;
+      });
     };
     document.getElementById('loginBtn').onclick=go;
     document.getElementById('tok').addEventListener('keydown',function(e){if(e.key==='Enter')go();});
   }
 
   /* ---------- boot ---------- */
+  function pickDefault(list){ var a=list.filter(function(s){return !s.archived;}); return (a[0]||list[0]||{}).slug||null; }
   function boot(){
     return api('/api/admin/bootstrap').then(function(d){
-      DATA=d; if(!current && d.surveys.length) current=d.surveys[0].slug;
+      DATA=d;
+      if(!current || !d.surveys.some(function(s){return s.slug===current;})) current=pickDefault(d.surveys);
       return loadSurvey(current);
     });
   }
+  function refreshList(){ return api('/api/admin/bootstrap').then(function(d){ DATA.surveys=d.surveys; }); }
   function loadSurvey(slug){
     if(!slug){ DATA.detail=null; renderApp(); return Promise.resolve(); }
-    return api('/api/admin/survey/'+slug).then(function(d){ DATA.detail=d; current=slug; renderApp(); });
+    return api('/api/admin/survey/'+encodeURIComponent(slug)).then(function(d){ DATA.detail=d; current=slug; renderApp(); });
   }
+  function editorDirty(){ return !!(ED && ED.slug===current && JSON.stringify(ED.draft)!==JSON.stringify(ED.orig)); }
+  function confirmDiscard(){ return !editorDirty() || confirm('You have unsaved question edits. Discard them?'); }
 
   /* ---------- shell ---------- */
   function renderApp(){
-    var opts=DATA.surveys.map(function(s){return '<option value="'+esc(s.slug)+'"'+(s.slug===current?' selected':'')+'>'+esc(s.title)+'</option>';}).join('');
+    var sorted=DATA.surveys.slice().sort(function(a,b){return (a.archived?1:0)-(b.archived?1:0);});
+    var opts=sorted.map(function(s){return '<option value="'+esc(s.slug)+'"'+(s.slug===current?' selected':'')+'>'+esc(s.title)+(s.archived?' (archived)':'')+'</option>';}).join('');
     app.innerHTML=
       '<header><div class="hd"><div class="mark serif">S</div><b>Survey Administration</b>'+
         '<span class="sp"></span>'+
         (DATA.surveys.length?'<select id="surveySel">'+opts+'</select>':'')+
+        '<button class="btn btn-primary btn-sm" id="newSurveyBtn">+ New survey</button>'+
         '<button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button>'+
       '</div></header><div class="wrap" id="wrap"></div>';
-    document.getElementById('logoutBtn').onclick=logout;
-    var sel=document.getElementById('surveySel'); if(sel) sel.onchange=function(){loadSurvey(this.value);};
+    document.getElementById('logoutBtn').onclick=function(){ if(confirmDiscard()) logout(); };
+    document.getElementById('newSurveyBtn').onclick=newSurveyModal;
+    var sel=document.getElementById('surveySel');
+    if(sel) sel.onchange=function(){
+      if(!confirmDiscard()){ this.value=current; return; }
+      ED=null; loadSurvey(this.value).catch(function(e){toast(errText(e),4000);});
+    };
     renderBody();
   }
 
   function renderBody(){
     var wrap=document.getElementById('wrap');
-    if(!DATA.surveys.length){ wrap.innerHTML='<div class="card"><p class="muted">No surveys found yet. The default questionnaire is seeded automatically on first visit to the site.</p></div>'; return; }
+    if(!DATA.surveys.length){ wrap.innerHTML='<div class="card"><p class="muted">No surveys found yet. Use <b>+ New survey</b> to create one.</p></div>'; return; }
     var d=DATA.detail; if(!d){wrap.innerHTML='';return;}
     wrap.innerHTML='<div class="tabs">'+
-      tabBtn('overview','Overview')+tabBtn('responses','Responses')+tabBtn('invitations','Invitations')+
+      tabBtn('overview','Overview')+tabBtn('responses','Responses')+tabBtn('invitations','Invitations')+tabBtn('questions','Questions')+tabBtn('settings','Settings')+
       '</div><div id="tabBody"></div>';
     [].forEach.call(wrap.querySelectorAll('.tabs button'),function(b){b.onclick=function(){tab=b.dataset.t;renderBody();};});
     if(tab==='overview')renderOverview(d);
     else if(tab==='responses')renderResponses(d);
+    else if(tab==='questions')renderQuestions(d);
+    else if(tab==='settings')renderSettings(d);
     else renderInvitations(d);
   }
-  function tabBtn(id,label){return '<button data-t="'+id+'" class="'+(tab===id?'on':'')+'">'+label+'</button>';}
+  function tabBtn(id,label){return '<button data-t="'+id+'" class="'+(tab===id?'on':'')+'">'+label+(id==='questions'&&editorDirty()?' •':'')+'</button>';}
+
+  function newSurveyModal(){
+    var dup='<option value="">— Blank survey —</option>'+DATA.surveys.map(function(s){return '<option value="'+esc(s.slug)+'">Duplicate: '+esc(s.title)+'</option>';}).join('');
+    var body=openModal('New survey',
+      '<label class="fl">URL name (slug)</label><input id="nsSlug" placeholder="e.g. annual-survey-2027" maxlength="64">'+
+      '<p class="muted" style="margin:4px 0 12px">Lowercase letters, digits and single hyphens. It cannot be changed later.</p>'+
+      '<div class="grid2"><div><label class="fl">Title (English)</label><input id="nsEn" maxlength="200"></div>'+
+      '<div><label class="fl">Title (Arabic)</label><input id="nsAr" dir="rtl" maxlength="200"></div></div>'+
+      '<label class="fl" style="margin-top:12px">Start from</label><select id="nsDup" style="width:100%">'+dup+'</select>'+
+      '<p class="muted" style="margin:6px 0 0">New surveys start as <b>Draft</b>: nobody can answer until you set the status to Active in Settings.</p>'+
+      '<div class="err" id="nsErr"></div>'+
+      '<div class="row" style="margin-top:8px"><button class="btn btn-primary" id="nsGo">Create survey</button></div>');
+    body.querySelector('#nsGo').onclick=function(){
+      var btn=this; btn.disabled=true;
+      api('/api/admin/survey',{method:'POST',body:{slug:body.querySelector('#nsSlug').value.trim(),title:{en:body.querySelector('#nsEn').value,ar:body.querySelector('#nsAr').value},duplicate_of:body.querySelector('#nsDup').value||undefined}})
+        .then(function(r){ closeModal(); return refreshList().then(function(){ ED=null; tab='questions'; return loadSurvey(r.slug); }); })
+        .then(function(){ toast('Survey created (draft)'); })
+        .catch(function(e){ body.querySelector('#nsErr').textContent=errText(e); btn.disabled=false; });
+    };
+  }
 
   /* ---------- overview ---------- */
   function renderOverview(d){
@@ -180,7 +311,10 @@
     defs.forEach(function(q){
       body+=renderQStats(q,resp,d.definition.default_lang||'en');
     });
-    document.getElementById('tabBody').innerHTML=tiles+body;
+    var sbar='<div class="card statusbar"><div class="row" style="justify-content:space-between">'+statusPill(d.survey)+
+      '<span class="copy" id="goSettings">Edit availability →</span></div></div>';
+    document.getElementById('tabBody').innerHTML=sbar+tiles+body;
+    document.getElementById('goSettings').onclick=function(){ tab='settings'; renderBody(); };
     [].forEach.call(document.querySelectorAll('.bf'),function(b){var w=b.dataset.w;requestAnimationFrame(function(){b.style.width=w+'%';});});
   }
   function tile(k,v){return '<div class="tile"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>';}
@@ -188,7 +322,7 @@
   function renderQStats(q,responses,lang){
     var L=function(o){return o?(o[lang]||o.en||o.ar||''):'';};
     var answered=responses.filter(function(r){return r.answers && r.answers[q.id]!=null && r.answers[q.id]!=='' && !(Array.isArray(r.answers[q.id])&&!r.answers[q.id].length);});
-    var head='<div class="card"><h3>'+esc(q.displayNum?('Q'+q.displayNum):'')+'</h3><div class="qtext">'+esc(L(q.label))+'</div>';
+    var head='<div class="card"><h3>'+esc(q.displayNum?('Q'+q.displayNum):'')+(q.hidden?' <span class="pill pending">hidden from respondents</span>':'')+'</h3><div class="qtext">'+esc(L(q.label))+'</div>';
     if(q.type==='single_choice'||q.type==='multiple_choice'||q.type==='yes_no'){
       var opts = q.type==='yes_no'? [{value:'yes',label:{en:'Yes',ar:'نعم'}},{value:'no',label:{en:'No',ar:'لا'}}] : (q.options||[]).slice();
       if(q.allow_other) opts.push({value:'__other__',label:{en:'Other',ar:'أخرى'}});
@@ -245,7 +379,7 @@
     var lang=d.definition.default_lang||'en';
     var L=function(o){return o?(o[lang]||o.en||''):'';};
     var headers=['SAI','Focal point','Status','Language','Updated'];
-    defs.forEach(function(q){ headers.push('Q'+q.displayNum+' '+L(q.label).slice(0,60)); if(q.allow_other)headers.push('Q'+q.displayNum+' other'); if(q.followup)headers.push('Q'+q.displayNum+' followup'); });
+    defs.forEach(function(q){ headers.push('Q'+q.displayNum+(q.hidden?' [hidden]':'')+' '+L(q.label).slice(0,60)); if(q.allow_other)headers.push('Q'+q.displayNum+' other'); if(q.followup)headers.push('Q'+q.displayNum+' followup'); });
     var lines=[headers];
     d.responses.forEach(function(r){
       var row=[r.sai_name||'', (r.answers&&r.answers.q_focal)||'', r.is_complete?'Completed':'Draft', (r.lang||'').toUpperCase(), (r.updated_at||'')];
@@ -292,15 +426,21 @@
       '</div>';
     body+='<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Invitations <span class="muted">('+invs.length+')</span></h3>'+
       (invs.length?'<button class="btn btn-ghost btn-sm" id="expInv">Export links CSV</button>':'')+'</div>'+
-      '<div style="overflow:auto"><table><thead><tr><th>SAI</th><th>Status</th><th>Link</th></tr></thead><tbody>'+
+      '<div style="overflow:auto"><table><thead><tr><th>SAI</th><th>Status</th><th>Deadline</th><th>Link</th><th></th></tr></thead><tbody>'+
       (invs.length? invs.map(function(i){
         var link=origin+'/i/'+i.token;
         return '<tr><td>'+esc(i.sai_name)+(i.sai_name_ar?'<br><span class="muted">'+esc(i.sai_name_ar)+'</span>':'')+'</td>'+
           '<td><span class="pill '+i.status+'">'+i.status+'</span></td>'+
-          '<td><span class="mono">'+esc(link)+'</span> <span class="copy" data-link="'+esc(link)+'">Copy</span></td></tr>';
-      }).join(''):'<tr><td colspan="3" class="muted">No invitations yet.</td></tr>')+
+          '<td>'+(i.effective_deadline?esc(fmtCairo(i.effective_deadline)):'<span class="muted">none</span>')+(i.deadline_override?' <span class="pill started">extended</span>':'')+'</td>'+
+          '<td><span class="mono">'+esc(link)+'</span> <span class="copy" data-link="'+esc(link)+'">Copy</span></td>'+
+          '<td style="white-space:nowrap"><span class="copy" data-extend="'+i.id+'">Extend</span> &nbsp; '+
+            (i.response_count>0?'<span class="muted" title="Has a response, cannot be deleted">Delete</span>':'<span class="copy danger-t" data-delinv="'+i.id+'">Delete</span>')+'</td></tr>';
+      }).join(''):'<tr><td colspan="5" class="muted">No invitations yet.</td></tr>')+
       '</tbody></table></div></div>';
+    if(d.survey.status!=='active') body='<div class="banner info-b">Status is <b>'+esc(d.survey.status)+'</b>: people opening these links will see a “closed” screen until the survey is set to Active (Settings tab).</div>'+body;
     document.getElementById('tabBody').innerHTML=body;
+    [].forEach.call(document.querySelectorAll('[data-extend]'),function(c){c.onclick=function(){ extendInvitationModal(invs.filter(function(i){return i.id===+c.dataset.extend;})[0],d.survey); };});
+    [].forEach.call(document.querySelectorAll('[data-delinv]'),function(c){c.onclick=function(){ deleteInvitation(invs.filter(function(i){return i.id===+c.dataset.delinv;})[0]); };});
     document.getElementById('createBtn').onclick=function(){
       var lines=document.getElementById('bulk').value.split('\n').map(function(l){return l.trim();}).filter(Boolean);
       if(!lines.length)return;
@@ -319,17 +459,382 @@
     [].forEach.call(document.querySelectorAll('.copy[data-link]'),function(c){c.onclick=function(){navigator.clipboard.writeText(c.dataset.link);toast('Link copied');};});
     var ei=document.getElementById('expInv');
     if(ei)ei.onclick=function(){
-      var lines=[['SAI','Arabic name','Country','Email','Status','Link']];
-      invs.forEach(function(i){lines.push([i.sai_name,i.sai_name_ar||'',i.country||'',i.contact_email||'',i.status,origin+'/i/'+i.token]);});
+      var lines=[['SAI','Arabic name','Country','Email','Status','Deadline (Cairo)','Link']];
+      invs.forEach(function(i){lines.push([i.sai_name,i.sai_name_ar||'',i.country||'',i.contact_email||'',i.status,i.effective_deadline?fmtCairo(i.effective_deadline):'',origin+'/i/'+i.token]);});
       var csv=lines.map(function(ln){return ln.map(csvCell).join(',');}).join('\r\n');
       var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=current+'-invitations.csv';a.click();
     };
   }
 
+  /* ================= Settings tab ================= */
+  function pad2(n){ return (n<10?'0':'')+n; }
+  // New deadline `n` days after the current one (same Cairo wall-clock time); from today 23:59 if there is none / it has passed.
+  function addDaysCairo(iso,n){
+    var live = iso && Date.parse(iso)>nowMs();
+    var p = cparts(live? iso : new Date(nowMs()).toISOString());
+    var time = live ? p.hour+':'+p.minute : '23:59';
+    var dt = new Date(Date.UTC(+p.year, +p.month-1, +p.day+n));
+    return dt.getUTCFullYear()+'-'+pad2(dt.getUTCMonth()+1)+'-'+pad2(dt.getUTCDate())+'T'+time;
+  }
+
+  function patchSurvey(body){
+    return api('/api/admin/survey/'+encodeURIComponent(current),{method:'PATCH',body:body}).then(function(r){
+      DATA.detail.survey=r.survey;
+      var t=r.survey.title;
+      if(body.title && ED && ED.slug===current){      // keep the editor's copy of the title in step
+        ED.draft.title=clone(t); ED.orig.title=clone(t);
+      }
+      if(DATA.detail.definition && body.title) DATA.detail.definition.title=clone(t);
+      return refreshList().then(function(){ return r; });
+    });
+  }
+
+  function renderSettings(d){
+    var sv=d.survey, origin=location.origin;
+    var opts=['draft','active','closed'].map(function(s){return '<option value="'+s+'"'+(sv.status===s?' selected':'')+'>'+{draft:'Draft — not accepting responses',active:'Active — accepting responses',closed:'Closed — not accepting responses'}[s]+'</option>';}).join('');
+    var html=
+      '<div class="card"><div class="row" style="justify-content:space-between"><h3>Availability</h3>'+statusPill(sv)+'</div>'+
+        '<p class="muted" style="margin:6px 0 0">Respondents can answer only while the status is <b>Active</b> and the deadline has not passed. Changes apply immediately.</p></div>'+
+
+      '<div class="card"><h3>Extend deadline</h3>'+
+        '<p class="muted" style="margin-bottom:12px">Current deadline: <b>'+(sv.deadline?esc(fmtCairo(sv.deadline)):'none')+'</b>. Extending reopens the survey straight away.</p>'+
+        '<div class="row"><button class="btn btn-primary btn-sm" data-ext="7">+7 days</button><button class="btn btn-ghost btn-sm" data-ext="14">+14 days</button><button class="btn btn-ghost btn-sm" data-ext="30">+30 days</button>'+
+        '<span class="muted">or custom (Cairo time):</span><input type="datetime-local" id="extCustom" style="width:auto">'+
+        '<button class="btn btn-ghost btn-sm" id="extSet">Set deadline</button></div>'+
+        (sv.status!=='active'?'<label class="chk" style="margin-top:12px"><input type="checkbox" id="extActivate" checked> Also set the status to Active</label>':'')+
+      '</div>'+
+
+      '<div class="card"><h3>Survey settings</h3>'+
+        '<div class="grid2" style="margin:12px 0"><div><label class="fl">Title (English)</label><input id="stEn" maxlength="200" value="'+esc(sv.title.en)+'"></div>'+
+        '<div><label class="fl">Title (Arabic)</label><input id="stAr" dir="rtl" maxlength="200" value="'+esc(sv.title.ar)+'"></div></div>'+
+        '<label class="fl">Status</label><select id="stStatus" style="width:100%;margin-bottom:12px">'+opts+'</select>'+
+        '<label class="fl">Deadline <span class="muted">— Cairo time (Africa/Cairo)</span></label>'+
+        '<div class="row" style="margin-bottom:12px"><input type="datetime-local" id="stDeadline" style="width:auto" value="'+esc(sv.deadline?cairoInput(sv.deadline):'')+'">'+
+        '<label class="chk"><input type="checkbox" id="stNoDl"'+(sv.deadline?'':' checked')+'> No deadline</label></div>'+
+        '<label class="chk"><input type="checkbox" id="stAnon"'+(sv.allow_anonymous?' checked':'')+'> Open public link (anyone with the link can answer, no invitation)</label>'+
+        '<div class="muted" style="margin:4px 0 12px 26px">'+(sv.allow_anonymous?'Public link: <span class="mono">'+esc(origin+'/s/'+sv.slug)+'</span> <span class="copy" id="cpAnon" data-link="'+esc(origin+'/s/'+sv.slug)+'">Copy</span>':'Personal invitation links and general links (Invitations tab) work regardless of this option.')+'</div>'+
+        '<label class="chk"><input type="checkbox" id="stArch"'+(sv.archived?' checked':'')+'> Archived <span class="muted">(listed last in the survey selector and hidden from the public home page; does not close the survey)</span></label>'+
+        '<div class="row" style="margin-top:16px"><button class="btn btn-primary" id="stSave">Save settings</button></div>'+
+      '</div>';
+    document.getElementById('tabBody').innerHTML=html;
+    var tb=document.getElementById('tabBody');
+    var noDl=tb.querySelector('#stNoDl'), dl=tb.querySelector('#stDeadline');
+    dl.addEventListener('input',function(){ if(dl.value) noDl.checked=false; });
+    noDl.addEventListener('change',function(){ if(noDl.checked) dl.value=''; });
+    var cp=tb.querySelector('#cpAnon'); if(cp) cp.onclick=function(){navigator.clipboard.writeText(cp.dataset.link);toast('Link copied');};
+
+    function extend(deadline){
+      var body={deadline:deadline}, act=tb.querySelector('#extActivate');
+      if(act && act.checked) body.status='active';
+      return patchSurvey(body).then(function(){ renderBody(); toast('Deadline updated'); }).catch(function(e){ toast(errText(e),5000); });
+    }
+    [].forEach.call(tb.querySelectorAll('[data-ext]'),function(b){ b.onclick=function(){ extend(addDaysCairo(sv.deadline,+b.dataset.ext)); }; });
+    tb.querySelector('#extSet').onclick=function(){ var v=tb.querySelector('#extCustom').value; if(!v){ toast('Pick a date and time first'); return; } extend(v); };
+
+    tb.querySelector('#stSave').onclick=function(){
+      var btn=this; btn.disabled=true;
+      patchSurvey({
+        title:{en:tb.querySelector('#stEn').value,ar:tb.querySelector('#stAr').value},
+        status:tb.querySelector('#stStatus').value,
+        deadline:(noDl.checked||!dl.value)?null:dl.value,
+        allow_anonymous:tb.querySelector('#stAnon').checked,
+        archived:tb.querySelector('#stArch').checked
+      }).then(function(){ renderApp(); toast('Settings saved'); })
+        .catch(function(e){ toast(errText(e),5000); btn.disabled=false; });
+    };
+  }
+
+  /* ================= Invitations: per-SAI deadline ================= */
+  function extendInvitationModal(inv,sv){
+    var body=openModal('Deadline for '+inv.sai_name,
+      '<p class="muted" style="margin-bottom:12px">Survey deadline: <b>'+(sv.deadline?esc(fmtCairo(sv.deadline)):'none')+'</b>. '+
+      'An extension applies only to this invitation and replaces the survey deadline for it.</p>'+
+      '<label class="fl">Extended deadline <span class="muted">— Cairo time</span></label>'+
+      '<input type="datetime-local" id="ivDl" value="'+esc(inv.effective_deadline?cairoInput(inv.effective_deadline):'')+'">'+
+      '<div class="err" id="ivErr"></div>'+
+      '<div class="row" style="margin-top:8px"><button class="btn btn-primary" id="ivSave">Save extension</button>'+
+      (inv.deadline_override?'<button class="btn btn-ghost" id="ivClear">Remove extension</button>':'')+'</div>');
+    function send(val,msg){
+      api('/api/admin/invitation/'+inv.id,{method:'PATCH',body:{deadline_override:val}})
+        .then(function(){ closeModal(); return loadSurvey(current); }).then(function(){ toast(msg); })
+        .catch(function(e){ body.querySelector('#ivErr').textContent=errText(e); });
+    }
+    body.querySelector('#ivSave').onclick=function(){ var v=body.querySelector('#ivDl').value; if(!v){ body.querySelector('#ivErr').textContent='Pick a date and time.'; return; } send(v,'Extension saved'); };
+    var c=body.querySelector('#ivClear'); if(c) c.onclick=function(){ send(null,'Extension removed'); };
+  }
+  function deleteInvitation(inv){
+    if(!confirm('Delete the invitation for "'+inv.sai_name+'"? Its link will stop working.')) return;
+    api('/api/admin/invitation/'+inv.id,{method:'DELETE'}).then(function(){ return loadSurvey(current); }).then(function(){ toast('Invitation deleted'); })
+      .catch(function(e){ toast(errText(e),5000); });
+  }
+
+  /* ================= Questions tab (form editor) ================= */
+  var QTYPES=[['short_text','Short text'],['long_text','Long text'],['email','Email'],['phone','Phone'],['single_choice','Single choice'],['multiple_choice','Multiple choice'],['ranking','Ranking'],['yes_no','Yes / No (+ follow-up)'],['matrix','Matrix (rows × columns)']];
+  var CHOICE=['single_choice','multiple_choice'];
+  function clone(o){ return JSON.parse(JSON.stringify(o)); }
+  function rid(n){ var c='abcdefghijklmnopqrstuvwxyz0123456789',s='',i; for(i=0;i<n;i++) s+=c.charAt(Math.floor(Math.random()*c.length)); return s; }
+  function getP(o,path){ return path.split('.').reduce(function(a,k){return a==null?a:a[k];},o); }
+  function setP(o,path,val){ var ks=path.split('.'),last=ks.pop(); ks.reduce(function(a,k){return a[k];},o)[last]=val; }
+  function move(arr,i,dir){ var j=i+dir; if(j<0||j>=arr.length) return; var t=arr[i]; arr[i]=arr[j]; arr[j]=t; }
+
+  function ensureEditor(d){
+    if(ED && ED.slug===d.survey.slug){ ED.resp=d.survey.response_count; return; }
+    var def=clone(d.definition);
+    ED={slug:d.survey.slug,draft:def,orig:clone(def),resp:d.survey.response_count,serverProblems:null};
+    // what already exists (and may hold answers): ids, option values, "other", follow-ups
+    ED.ids={}; ED.vals={};
+    (ED.orig.sections||[]).forEach(function(s){ (s.questions||[]).forEach(function(q){
+      ED.ids[q.id]={other:!!q.allow_other,follow:!!q.followup};
+      ['options','items','rows','columns'].forEach(function(f){ if(q[f]) ED.vals[q.id+'|'+f]=q[f].map(function(o){return o.value;}); });
+    }); });
+  }
+  function qLocked(q){ return ED.resp>0 && !!ED.ids[q.id]; }
+  function entLocked(q,f,o){ return ED.resp>0 && (ED.vals[q.id+'|'+f]||[]).indexOf(o.value)!==-1; }
+
+  function checkDraft(){
+    var out=[];
+    if(!DefCheck) return out;
+    DefCheck.validateDefinition(ED.draft).problems.forEach(function(p){ out.push(p.message); });
+    if(ED.resp>0) DefCheck.checkCompatibility(ED.orig,ED.draft).forEach(function(p){ out.push(p.id+': '+p.message); });
+    return out;
+  }
+
+  function newEntry(label){ return {value:'o_'+rid(6),label:{en:label,ar:''}}; }
+  function initType(q,type,keep){
+    ['options','items','rows','columns','allow_other','followup','followup_if'].forEach(function(k){ if(!(keep&&keep[k])) delete q[k]; else q[k]=keep[k]; });
+    q.type=type;
+    if(CHOICE.indexOf(type)>-1 && !q.options) q.options=[newEntry('Option 1'),newEntry('Option 2')];
+    if(type==='ranking' && !q.items) q.items=[newEntry('Item 1'),newEntry('Item 2')];
+    if(type==='matrix'){ if(!q.rows) q.rows=[newEntry('Statement 1')]; if(!q.columns) q.columns=[{value:'yes',label:{en:'Yes',ar:'نعم'}},{value:'no',label:{en:'No',ar:'لا'}}]; }
+  }
+  function newQuestion(type){ var q={id:'q_'+rid(8),type:type,required:false,label:{en:'',ar:''}}; initType(q,type); return q; }
+  function changeType(q,type){
+    var keep=null;
+    if(CHOICE.indexOf(q.type)>-1 && CHOICE.indexOf(type)>-1) keep={options:q.options,allow_other:q.allow_other};
+    initType(q,type,keep);
+  }
+
+  /* ---- rendering ---- */
+  function ib(act,data,label,disabled,title,cls){
+    var a=''; Object.keys(data||{}).forEach(function(k){ a+=' data-'+k+'="'+esc(data[k])+'"'; });
+    return '<button class="ib'+(cls?' '+cls:'')+'" data-act="'+act+'"'+a+(disabled?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+label+'</button>';
+  }
+  function txt(path,val,ph,rtl){ return '<input data-bind="'+path+'" value="'+esc(val)+'" placeholder="'+esc(ph)+'"'+(rtl?' dir="rtl"':'')+'>'; }
+
+  function entriesHtml(q,si,qi,f,title,addLabel,free){
+    var base='sections.'+si+'.questions.'+qi+'.'+f, list=q[f]||[];
+    return '<div class="ed-list"><div class="ed-list-hd">'+title+'</div>'+
+      list.map(function(o,oi){
+        var lk=entLocked(q,f,o), d={si:si,qi:qi,f:f,oi:oi};
+        return '<div class="ed-ent">'+txt(base+'.'+oi+'.label.en',(o.label||{}).en||'','English')+txt(base+'.'+oi+'.label.ar',(o.label||{}).ar||'','العربية',true)+
+          (free?'<label class="chk" title="Shows a free-text box for this item"><input type="checkbox" data-bind="'+base+'.'+oi+'.is_other"'+(o.is_other?' checked':'')+'> text</label>':'')+
+          ib('ent-up',d,'↑',oi===0,'Move up')+ib('ent-down',d,'↓',oi===list.length-1,'Move down')+
+          ib('ent-del',d,'✕',lk||list.length<=1,lk?'Cannot be removed once the survey has responses':(list.length<=1?'At least one entry is required':'Remove'),'danger')+'</div>';
+      }).join('')+
+      '<button class="btn btn-ghost btn-sm" data-act="ent-add" data-si="'+si+'" data-qi="'+qi+'" data-f="'+f+'">+ '+addLabel+'</button></div>';
+  }
+
+  function typeBlock(q,si,qi){
+    var p='sections.'+si+'.questions.'+qi, info=ED.ids[q.id]||{};
+    if(CHOICE.indexOf(q.type)>-1)
+      return '<label class="chk"><input type="checkbox" data-bind="'+p+'.allow_other"'+(q.allow_other?' checked':'')+((ED.resp>0&&info.other)?' disabled':'')+'> Offer an “Other (please specify)” option</label>'+
+        entriesHtml(q,si,qi,'options','Options','Add option');
+    if(q.type==='ranking') return entriesHtml(q,si,qi,'items','Items to rank','Add item',true);
+    if(q.type==='matrix') return entriesHtml(q,si,qi,'rows','Rows (statements)','Add row')+entriesHtml(q,si,qi,'columns','Columns (answers)','Add column');
+    if(q.type==='yes_no'){
+      var lockFu=ED.resp>0&&info.follow, fu=q.followup;
+      return '<label class="chk"><input type="checkbox" data-fu="'+si+'.'+qi+'"'+(fu?' checked':'')+(lockFu?' disabled':'')+'> Ask a follow-up question</label>'+
+        (fu?'<div class="ed-list"><div class="row" style="margin-bottom:8px"><span class="muted">Ask when the answer is</span>'+
+          '<select data-bind="'+p+'.followup_if" style="width:auto"><option value="yes"'+((q.followup_if||'yes')==='yes'?' selected':'')+'>Yes</option><option value="no"'+(q.followup_if==='no'?' selected':'')+'>No</option></select>'+
+          '<span class="muted">as</span><select data-bind="'+p+'.followup.type" style="width:auto"><option value="long_text"'+(fu.type==='long_text'?' selected':'')+'>Long text</option><option value="short_text"'+(fu.type==='short_text'?' selected':'')+'>Short text</option></select></div>'+
+          '<div class="ed-ent">'+txt(p+'.followup.label.en',(fu.label||{}).en||'','Follow-up (English)')+txt(p+'.followup.label.ar',(fu.label||{}).ar||'','السؤال التالي (العربية)',true)+'</div></div>':'');
+    }
+    return '';
+  }
+
+  function qHtml(q,si,qi,num,count){
+    var lk=qLocked(q), isNew=ED.resp>0&&!ED.ids[q.id], p='sections.'+si+'.questions.'+qi, d={si:si,qi:qi};
+    var sel='<select data-chtype data-si="'+si+'" data-qi="'+qi+'"'+(lk?' disabled title="The type cannot change once the survey has responses"':'')+'>'+
+      QTYPES.map(function(t){return '<option value="'+t[0]+'"'+(q.type===t[0]?' selected':'')+'>'+t[1]+'</option>';}).join('')+'</select>';
+    return '<div class="ed-q'+(q.hidden?' is-hidden':'')+'">'+
+      '<div class="ed-q-hd"><span class="q-n">Q'+num+'</span><span class="mono">'+esc(q.id)+'</span>'+(q.hidden?'<span class="pill pending">Hidden</span>':'')+(isNew?'<span class="pill started">New</span>':'')+'<span class="sp"></span>'+
+        ib('q-up',d,'↑',qi===0,'Move up')+ib('q-down',d,'↓',qi===count-1,'Move down')+
+        ib('q-hide',d,q.hidden?'Unhide':'Hide',false,q.hidden?'Show this question to respondents again':'Respondents will no longer see it; existing answers, the dashboard and CSV keep it')+
+        ib('q-del',d,'Delete',lk,lk?'Questions of a survey with responses cannot be deleted — use Hide':'Delete this question','danger')+'</div>'+
+      '<div class="row" style="margin:8px 0">'+sel+'<label class="chk"><input type="checkbox" data-bind="'+p+'.required"'+(q.required?' checked':'')+'> Required</label></div>'+
+      '<div class="grid2">'+txt(p+'.label.en',(q.label||{}).en||'','Question (English)')+txt(p+'.label.ar',(q.label||{}).ar||'','السؤال (العربية)',true)+'</div>'+
+      '<div style="margin-top:10px">'+typeBlock(q,si,qi)+'</div></div>';
+  }
+
+  function sectionsHtml(){
+    var n=0, secs=ED.draft.sections||[];
+    return secs.map(function(s,si){
+      var lk=ED.resp>0 && (s.questions||[]).some(function(q){return ED.ids[q.id];}), d={si:si};
+      var qs=(s.questions||[]).map(function(q,qi){ n++; return qHtml(q,si,qi,n,s.questions.length); }).join('');
+      return '<div class="ed-sec"><div class="ed-sec-hd"><b>Section '+(si+1)+'</b><span class="mono">'+esc(s.id)+'</span><span class="sp"></span>'+
+          ib('sec-up',d,'↑',si===0,'Move up')+ib('sec-down',d,'↓',si===secs.length-1,'Move down')+
+          ib('sec-del',d,'Delete section',lk||secs.length<=1,lk?'This section holds questions of a survey with responses — hide them instead':(secs.length<=1?'A survey needs at least one section':'Delete this section'),'danger')+'</div>'+
+        '<div class="grid2">'+txt('sections.'+si+'.title.en',(s.title||{}).en||'','Section title (English)')+txt('sections.'+si+'.title.ar',(s.title||{}).ar||'','عنوان القسم (العربية)',true)+'</div>'+
+        qs+
+        '<div class="row" style="margin-top:12px"><select data-newtype="'+si+'" style="width:auto">'+QTYPES.map(function(t){return '<option value="'+t[0]+'">'+t[1]+'</option>';}).join('')+'</select>'+
+        '<button class="btn btn-ghost btn-sm" data-act="q-add" data-si="'+si+'">+ Add question</button></div></div>';
+    }).join('')+'<button class="btn btn-ghost" data-act="sec-add">+ Add section</button>';
+  }
+
+  function refreshEdStatus(){
+    var probs=(ED.serverProblems&&ED.serverProblems.length)?ED.serverProblems:checkDraft();
+    var box=document.getElementById('edProblems'); if(!box) return;
+    box.innerHTML=probs.length?'<div class="banner err-b"><b>Fix before saving:</b><ul>'+probs.slice(0,12).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+(probs.length>12?'<li>… and '+(probs.length-12)+' more</li>':'')+'</ul></div>':'';
+    var dirty=editorDirty(), save=document.getElementById('edSave'), disc=document.getElementById('edDiscard'), st=document.getElementById('edState');
+    if(save) save.disabled=!dirty||checkDraft().length>0;
+    if(disc) disc.disabled=!dirty;
+    if(st) st.textContent=dirty?'Unsaved changes':'All changes saved';
+    var tbtn=document.querySelector('.tabs button[data-t="questions"]'); if(tbtn) tbtn.textContent='Questions'+(dirty?' •':'');
+  }
+  function drawEditor(){
+    document.getElementById('edRoot').innerHTML=sectionsHtml();
+    var jb=document.getElementById('jsonBox'); if(jb && !jb.matches(':focus')) jb.value=JSON.stringify(ED.draft,null,2);
+    refreshEdStatus();
+  }
+
+  function renderQuestions(d){
+    ensureEditor(d);
+    var tb=document.getElementById('tabBody');
+    tb.innerHTML=
+      (ED.resp>0?'<div class="banner warn-b"><b>This survey has '+ED.resp+' response'+(ED.resp===1?'':'s')+'.</b> To protect collected data you cannot delete questions or options, change a question’s type, or change option values. '+
+        'You can still edit texts, add questions or options, reorder, toggle “Required”, and <b>Hide</b> a question (its answers stay in the dashboard and CSV).</div>':'')+
+      (sv_inactive(d)?'<div class="banner info-b">Status is <b>'+esc(d.survey.status)+'</b> — respondents cannot answer yet. Open the Settings tab to activate the survey.</div>':'')+
+      '<div id="edProblems"></div>'+
+      '<div class="ed-bar"><button class="btn btn-ghost btn-sm" id="edPreview">Preview</button>'+
+        '<button class="btn btn-primary btn-sm" id="edSave">Save changes</button>'+
+        '<button class="btn btn-ghost btn-sm" id="edDiscard">Discard changes</button><span class="muted" id="edState"></span></div>'+
+      '<div id="edRoot"></div>'+
+      '<details class="card" id="advBox" style="margin-top:18px"><summary><b>Advanced: JSON</b> <span class="muted">— the raw survey definition, for power users</span></summary>'+
+        '<p class="muted" style="margin:10px 0">Edit the JSON and press <b>Apply to editor</b>; it is validated and nothing is saved until you press <b>Save changes</b>. Status, deadline and anonymous access are managed in Settings, not here.</p>'+
+        '<textarea id="jsonBox" rows="14" spellcheck="false" style="font-family:ui-monospace,Menlo,monospace;font-size:12px"></textarea>'+
+        '<div class="err" id="jsonErr"></div>'+
+        '<div class="row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" id="jsonApply">Apply to editor</button><button class="btn btn-ghost btn-sm" id="jsonReset">Reload from editor</button></div></details>'+
+      '<div class="card" style="margin-top:18px"><h3>Version history</h3><p class="muted" style="margin-bottom:10px">Each save keeps the previous definition. Restoring also keeps the current one, so it can be undone.</p><div id="verBox"><span class="muted">Loading…</span></div></div>';
+    drawEditor();
+    loadVersions();
+
+    tb.addEventListener('input',onEdInput);
+    tb.addEventListener('change',onEdChange);
+    tb.addEventListener('click',onEdClick);
+    document.getElementById('edPreview').onclick=openPreview;
+    document.getElementById('edSave').onclick=saveEditor;
+    document.getElementById('edDiscard').onclick=function(){ if(editorDirty() && !confirm('Discard all unsaved question edits?')) return; ED=null; renderBody(); };
+    document.getElementById('jsonReset').onclick=function(){ document.getElementById('jsonBox').value=JSON.stringify(ED.draft,null,2); document.getElementById('jsonErr').textContent=''; };
+    document.getElementById('jsonApply').onclick=applyJson;
+  }
+  function sv_inactive(d){ return d.survey.status!=='active'; }
+
+  function onEdInput(e){
+    var t=e.target; if(!t.dataset || !t.dataset.bind || t.type==='checkbox' || t.tagName==='SELECT') return;
+    setP(ED.draft,t.dataset.bind,t.value); ED.serverProblems=null; refreshEdStatus();
+  }
+  function onEdChange(e){
+    var t=e.target; if(!t.dataset) return;
+    if(t.dataset.bind && (t.type==='checkbox' || t.tagName==='SELECT')){
+      var val=t.type==='checkbox'?t.checked:t.value;
+      var last=t.dataset.bind.split('.').pop();
+      if(t.type==='checkbox' && !val && (last==='is_other'||last==='allow_other')){ delete getP(ED.draft,t.dataset.bind.split('.').slice(0,-1).join('.'))[last]; }
+      else setP(ED.draft,t.dataset.bind,val);
+      ED.serverProblems=null; refreshEdStatus();
+      if(t.tagName==='SELECT' && last==='type') drawEditor();
+    } else if(t.dataset.chtype!==undefined){
+      changeType(ED.draft.sections[+t.dataset.si].questions[+t.dataset.qi],t.value); ED.serverProblems=null; drawEditor();
+    } else if(t.dataset.fu){
+      var ij=t.dataset.fu.split('.'), q=ED.draft.sections[+ij[0]].questions[+ij[1]];
+      if(t.checked){ q.followup={type:'long_text',label:{en:'',ar:''}}; q.followup_if='yes'; } else { delete q.followup; delete q.followup_if; }
+      ED.serverProblems=null; drawEditor();
+    }
+  }
+  function onEdClick(e){
+    var b=e.target.closest('[data-act]'); if(!b || b.disabled) return;
+    var act=b.dataset.act, secs=ED.draft.sections, si=+b.dataset.si, qi=+b.dataset.qi, f=b.dataset.f, oi=+b.dataset.oi;
+    var s=secs[si], q=s&&s.questions?s.questions[qi]:null;
+    switch(act){
+      case 'sec-add': secs.push({id:'s_'+rid(6),title:{en:'New section',ar:''},questions:[]}); break;
+      case 'sec-up': move(secs,si,-1); break;
+      case 'sec-down': move(secs,si,1); break;
+      case 'sec-del': if(!confirm('Delete this section'+(s.questions.length?' and its '+s.questions.length+' question(s)':'')+'?')) return; secs.splice(si,1); break;
+      case 'q-add': var sel=document.querySelector('select[data-newtype="'+si+'"]'); s.questions.push(newQuestion(sel?sel.value:'short_text')); break;
+      case 'q-up': move(s.questions,qi,-1); break;
+      case 'q-down': move(s.questions,qi,1); break;
+      case 'q-hide': if(q.hidden) delete q.hidden; else q.hidden=true; break;
+      case 'q-del': if(!confirm('Delete this question?')) return; s.questions.splice(qi,1); break;
+      case 'ent-add': q[f].push(newEntry(f==='columns'?'Answer':f==='rows'?'Statement':f==='items'?'Item':'Option')); break;
+      case 'ent-up': move(q[f],oi,-1); break;
+      case 'ent-down': move(q[f],oi,1); break;
+      case 'ent-del': q[f].splice(oi,1); break;
+      default: return;
+    }
+    ED.serverProblems=null; drawEditor();
+  }
+
+  function applyJson(){
+    var err=document.getElementById('jsonErr'), def;
+    try{ def=JSON.parse(document.getElementById('jsonBox').value); }catch(x){ err.textContent='Not valid JSON: '+x.message; return; }
+    if(def.slug!==current){ err.textContent='The "slug" must stay "'+current+'".'; return; }
+    if(DefCheck){
+      var v=DefCheck.validateDefinition(def);
+      if(!v.ok){ err.textContent=v.problems.slice(0,6).map(function(p){return p.message;}).join(' · '); return; }
+    }
+    ED.draft=def; ED.serverProblems=null; err.textContent=''; drawEditor(); toast('JSON applied to the editor — not saved yet');
+  }
+
+  function saveEditor(){
+    var probs=checkDraft(); if(probs.length){ toast('Fix the listed problems first',3500); return; }
+    var btn=document.getElementById('edSave'); btn.disabled=true;
+    api('/api/admin/survey/'+encodeURIComponent(current)+'/definition',{method:'PUT',body:{definition:ED.draft,note:'Edited in admin'}})
+      .then(function(r){ ED=null; return loadSurvey(current).then(function(){ toast(r.unchanged?'Nothing to save — no changes':'Saved. Previous version kept in history',3000); }); })
+      .catch(function(e){
+        var list=(e.body&&e.body.problems)?e.body.problems.map(function(p){return p.id?p.id+': '+p.message:p.message;}):[errText(e)];
+        ED.serverProblems=list; refreshEdStatus(); btn.disabled=false; toast(errText(e),5000);
+      });
+  }
+
+  /* ---- live preview (renders the draft in the real survey renderer, saves nothing) ---- */
+  function openPreview(){
+    if(checkDraft().length) toast('The draft has problems — the preview may look incomplete',3500);
+    var body=openModal('Preview — nothing is saved or sent','<iframe id="pvFrame" src="/survey.html#preview" title="Survey preview"></iframe>',true);
+    var frame=body.querySelector('#pvFrame');
+    function send(){ if(frame.contentWindow) frame.contentWindow.postMessage({type:'survey-preview',definition:clone(ED.draft)},location.origin); }
+    previewListener=function(e){ if(e.origin===location.origin && e.data && e.data.type==='survey-preview-ready') send(); };
+    window.addEventListener('message',previewListener);
+    frame.addEventListener('load',function(){ setTimeout(send,60); });
+  }
+
+  /* ---- version history ---- */
+  function loadVersions(){
+    var slug=current;
+    api('/api/admin/survey/'+encodeURIComponent(slug)+'/versions').then(function(r){
+      var box=document.getElementById('verBox'); if(!box || current!==slug) return;
+      box.innerHTML=r.versions.length?
+        '<table><thead><tr><th>Version</th><th>Saved</th><th>Note</th><th>Contents</th><th></th></tr></thead><tbody>'+r.versions.map(function(v){
+          return '<tr><td>v'+v.version+'</td><td class="mono">'+esc((v.saved_at||'').slice(0,16))+' UTC</td><td>'+esc(v.note||'')+'</td><td class="muted">'+v.sections+' sections · '+v.questions+' questions</td>'+
+            '<td><span class="copy" data-restore="'+v.version+'">Restore</span></td></tr>';
+        }).join('')+'</tbody></table>':'<span class="muted">No earlier versions yet — the first save creates one.</span>';
+      [].forEach.call(box.querySelectorAll('[data-restore]'),function(el){ el.onclick=function(){ restoreVersion(+el.dataset.restore); }; });
+    }).catch(function(e){ var box=document.getElementById('verBox'); if(box) box.innerHTML='<span class="muted">Could not load versions: '+esc(errText(e))+'</span>'; });
+  }
+  function restoreVersion(n){
+    if(!confirm('Restore version '+n+'?\nThe current definition is kept as a new version.'+(editorDirty()?'\nUnsaved editor changes will be discarded.':''))) return;
+    api('/api/admin/survey/'+encodeURIComponent(current)+'/restore/'+n,{method:'POST'})
+      .then(function(){ ED=null; return loadSurvey(current); }).then(function(){ toast('Version '+n+' restored'); })
+      .catch(function(e){
+        var extra=(e.body&&e.body.problems)?'\n\n'+e.body.problems.map(function(p){return '• '+(p.id?p.id+': ':'')+p.message;}).join('\n'):'';
+        alert('Could not restore: '+errText(e)+extra);
+      });
+  }
+
   /* ---------- utils ---------- */
   function flatten(def){ var n=0,out=[]; (def.sections||[]).forEach(function(s){(s.questions||[]).forEach(function(q){n++;q.displayNum=n;out.push(q);});}); return out; }
 
-  if(TOKEN){ boot().catch(function(){renderLogin();}); } else { renderLogin(); }
+  function start(){ if(TOKEN){ boot().catch(function(){renderLogin();}); } else { renderLogin(); } }
+  // The validator is shared with the Worker (site/definition.js); the editor still works without it.
+  import('/definition.js').then(function(m){ DefCheck=m; }).catch(function(){}).then(start);
 })();
 </script>
 </body>

@@ -17,9 +17,15 @@
            other:"Other (please specify)", yes:"Yes", no:"No", est:"Estimated time",
            deadline:"Response deadline", print:"Print / save my answers", edit:"Edit my response",
            reviewSubmitting:"Submitting…", resumed:"Welcome back — your previous answers were restored.",
-           rankHint:"Use the arrows to order the items.", closedT:"This questionnaire is closed",
+           rankHint:"Use the arrows to order the items.", closedT:"This questionnaire is closed", notOpenT:"Not open yet",
            closedB:"Thank you for your interest. The response window for this questionnaire has ended.",
-           doneT:"Response already submitted", pct:"complete" },
+           doneT:"Response already submitted", pct:"complete",
+           closedDeadlineB:"The response deadline for this questionnaire was {date}. Thank you for your interest.",
+           notOpenB:"This questionnaire is not open for responses yet.",
+           viewResp:"View my response", backSummary:"Done", cairo:"Cairo time",
+           readonlyNote:"Read-only — the response period has ended.",
+           closesIn:"Closes in",
+           previewNote:"PREVIEW — nothing is saved or sent", noQuestions:"This survey has no visible questions yet." },
       ar:{ start:"بدء الاستبيان", next:"التالي", back:"السابق", submit:"إرسال الردّ",
            saveLater:"حفظ والمتابعة لاحقًا", saved:"تم حفظ تقدّمك", section:"القسم",
            of:"من", welcome:"دعوة", required:"هذا السؤال مطلوب",
@@ -27,18 +33,35 @@
            other:"أخرى (يرجى التحديد)", yes:"نعم", no:"لا", est:"الزمن التقديري",
            deadline:"آخر موعد للردّ", print:"طباعة / حفظ إجاباتي", edit:"تعديل ردّي",
            reviewSubmitting:"جارٍ الإرسال…", resumed:"مرحبًا بعودتك — تمت استعادة إجاباتك السابقة.",
-           rankHint:"استخدم الأسهم لترتيب العناصر.", closedT:"هذا الاستبيان مغلق",
+           rankHint:"استخدم الأسهم لترتيب العناصر.", closedT:"هذا الاستبيان مغلق", notOpenT:"غير متاح بعد",
            closedB:"نشكركم على اهتمامكم. انتهت فترة استقبال الردود لهذا الاستبيان.",
-           doneT:"تم إرسال الردّ مسبقًا", pct:"مكتمل" }
+           doneT:"تم إرسال الردّ مسبقًا", pct:"مكتمل",
+           closedDeadlineB:"انتهى الموعد النهائي للردّ على هذا الاستبيان بتاريخ {date}. نشكركم على اهتمامكم.",
+           notOpenB:"هذا الاستبيان غير متاح لاستقبال الردود بعد.",
+           viewResp:"عرض ردّي", backSummary:"تم", cairo:"بتوقيت القاهرة",
+           readonlyNote:"للقراءة فقط — انتهت فترة الردّ.",
+           closesIn:"يُغلق خلال",
+           previewNote:"معاينة — لا يتم حفظ أو إرسال أي شيء", noQuestions:"لا توجد أسئلة ظاهرة في هذا الاستبيان بعد." }
     };
+
+    // Server clock offset, so countdowns do not depend on the respondent's own clock.
+    var skew = CTX.server_now ? (Date.parse(CTX.server_now) - Date.now()) : 0;
+    function nowMs(){ return Date.now() + (isNaN(skew) ? 0 : skew); }
+    var PREVIEW = CTX.mode === 'preview';
 
     var state = {
       lang: CTX.lang || SURVEY.default_lang || 'en',
       step: 0,                 // 0 = welcome, 1..N = sections, N+1 = thank you
       answers: CTX.answers || {},
-      sections: SURVEY.sections || [],
-      submitted: !!CTX.already_complete
+      // Hidden questions are skipped (their stored answers are kept server-side);
+      // a section whose questions are all hidden disappears.
+      sections: (SURVEY.sections || []).map(function(s){
+        return Object.assign({}, s, { questions: (s.questions || []).filter(function(q){ return !q.hidden; }) });
+      }).filter(function(s){ return s.questions.length; }),
+      submitted: !!CTX.already_complete,
+      viewing: false           // read-only walk-through of a submitted response after the deadline
     };
+    function readOnly(){ return !!(CTX.closed && state.submitted); }
     var SVG = {
       check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
       checkThin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
@@ -82,7 +105,9 @@
 
     function render(){
       applyDir();
-      if(SURVEY.status==='closed' && !state.submitted){ renderNotice(t('closedT'),t('closedB'),SVG.lock); return; }
+      if(PREVIEW) showPreviewRibbon();
+      if(CTX.closed && !state.submitted){ renderClosed(); return; }
+      if(!state.sections.length){ renderNotice(t('noQuestions'),'',SVG.lock); return; }
       if(state.step===0) renderWelcome();
       else if(state.step>state.sections.length) renderThankYou();
       else renderSection(state.step-1);
@@ -91,7 +116,40 @@
     }
 
     function renderNotice(title,body,icon){
+      var old=document.querySelector('.navbar'); if(old) old.remove();
       root.innerHTML = '<div class="notice">'+icon+'<h2>'+esc(title)+'</h2><p>'+esc(body)+'</p></div>';
+    }
+
+    function renderClosed(){
+      var body = t('closedB'), title = t('closedT');
+      if(CTX.closed_reason==='deadline' && CTX.deadline) body = t('closedDeadlineB').replace('{date}', fmtDeadline(CTX.deadline));
+      else if(CTX.closed_reason==='draft'){ title = t('notOpenT'); body = t('notOpenB'); }
+      renderNotice(title, body, SVG.lock);
+      document.getElementById('progressFill').style.width = '0%';
+    }
+    // The server rejected a save because the survey closed while the form was open.
+    function markClosed(j){
+      CTX.closed = true; CTX.closed_reason = (j && j.reason) || 'status';
+      if(j && j.deadline){ CTX.deadline = j.deadline; SURVEY.deadline = j.deadline; }
+      render();
+    }
+    function showPreviewRibbon(){
+      var r=document.getElementById('previewRibbon');
+      if(!r){ r=document.createElement('div'); r.id='previewRibbon'; r.className='preview-ribbon'; document.body.appendChild(r); }
+      r.textContent=t('previewNote');
+    }
+    function countPhrase(n, unit){
+      if(state.lang!=='ar') return n+' '+unit+(n===1?'':'s');
+      var W = unit==='day' ? ['يوم واحد','يومين','أيام','يومًا'] : ['ساعة واحدة','ساعتين','ساعات','ساعة'];
+      return n===1 ? W[0] : n===2 ? W[1] : n<=10 ? n+' '+W[2] : n+' '+W[3];
+    }
+    // "Closes in N days" once 7 days or fewer remain (hours when under a day).
+    function closesHint(){
+      if(!SURVEY.deadline || CTX.closed) return '';
+      var ms = Date.parse(SURVEY.deadline) - nowMs();
+      if(isNaN(ms) || ms<=0 || ms>7*864e5) return '';
+      var phrase = ms < 864e5 ? countPhrase(Math.max(1,Math.ceil(ms/36e5)),'hour') : countPhrase(Math.ceil(ms/864e5),'day');
+      return t('closesIn')+' '+phrase;
     }
 
     function renderWelcome(){
@@ -105,7 +163,8 @@
       var body = (intro.body||[]).map(function(p){return '<p>'+esc(L(p))+'</p>';}).join('');
       var chips = '';
       if(intro.estimated_time) chips += chip(SVG.clock, t('est'), L(intro.estimated_time));
-      if(SURVEY.deadline) chips += chip(SVG.cal, t('deadline'), fmtDate(SURVEY.deadline));
+      if(SURVEY.deadline) chips += chip(SVG.cal, t('deadline'), fmtDeadline(SURVEY.deadline));
+      var hint = closesHint();
       var resumed = (CTX.resumed) ? '<div class="save-note" style="margin:0 0 18px">'+SVG.disk+esc(t('resumed'))+'</div>' : '';
 
       root.innerHTML =
@@ -116,6 +175,7 @@
           (intro.subtitle?'<p class="hero-sub">'+esc(L(intro.subtitle))+'</p>':'')+
           '<div class="intro-body">'+body+'</div>'+
           '<div class="meta-chips">'+chips+'</div>'+
+          (hint?'<div class="deadline-hint">'+SVG.clock+'<span>'+esc(hint)+'</span></div>':'')+
         '</div></div>';
       renderNav({back:false, nextLabel:t('start')});
     }
@@ -150,7 +210,17 @@
 
       bindSection(sec, idx);
       var last = idx===total-1;
+      if(readOnly()){ applyReadOnly(); renderNav({back:true, nextLabel: last? t('backSummary'): t('next'), submit:false}); return; }
       renderNav({back:true, nextLabel: last? t('submit'): t('next'), submit:last});
+    }
+
+    // After the deadline a submitted response can still be read, but not changed.
+    function applyReadOnly(){
+      [].forEach.call(root.querySelectorAll('input,textarea,select,button[data-rk]'),function(el){ el.disabled=true; });
+      [].forEach.call(root.querySelectorAll('.opts,.rank-list,.matrix'),function(el){ el.style.pointerEvents='none'; });
+      var panel=root.querySelector('.panel');
+      if(panel){ var n=document.createElement('div'); n.className='save-note'; n.style.cssText='margin:0 0 16px;opacity:1';
+        n.innerHTML=SVG.lock+esc(t('readonlyNote')); panel.insertBefore(n,panel.firstChild); }
     }
 
     function renderQuestion(q, si, qi){
@@ -382,7 +452,7 @@
       nx.addEventListener('click',function(){
         if(opts.submit){ doSubmit(); }
         else if(state.step===0){ state.step=1; render(); }
-        else { if(validateSection(state.step-1)){ state.step++; render(); } }
+        else { if(readOnly() || validateSection(state.step-1)){ state.step++; render(); } }
       });
       var bk=document.getElementById('navBack');
       if(bk) bk.addEventListener('click',function(){ if(state.step>0){state.step--;render();} });
@@ -393,6 +463,7 @@
     /* ---------- save / submit ---------- */
     var saveTimer=null, lastSaved=0;
     function scheduleSave(){
+      if(PREVIEW || readOnly()) return;
       try{ localStorage.setItem('scei_draft_'+SURVEY.slug, JSON.stringify({answers:state.answers,lang:state.lang,ts:Date.now()})); }catch(e){}
       if(CTX.mode!=='invitation') return;
       clearTimeout(saveTimer);
@@ -410,7 +481,16 @@
         code:(CTX.link&&CTX.link.code)||null,
         draft_key:getDraftKey(), lang:state.lang, answers:state.answers, is_complete:complete };
       return fetch(API+'/api/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-        .then(function(r){ if(!r.ok) throw new Error('save failed'); return r.json(); });
+        .then(function(r){
+          if(r.status===403){
+            return r.json().catch(function(){ return {}; }).then(function(j){
+              if(j.error==='survey_closed'){ markClosed(j); throw new Error('closed'); }
+              throw new Error('save failed');
+            });
+          }
+          if(!r.ok) throw new Error('save failed');
+          return r.json();
+        });
     }
     function getDraftKey(){
       try{ var k=localStorage.getItem('scei_dk_'+SURVEY.slug);
@@ -419,12 +499,14 @@
     }
     function doSubmit(){
       if(!validateSection(state.step-1)) return;
+      if(PREVIEW){ state.submitted=true; state.step=state.sections.length+1; render(); return; }
       var nx=document.getElementById('navNext'); if(nx){nx.disabled=true;nx.textContent=t('reviewSubmitting');}
       postResponse(true).then(function(){
         state.submitted=true;
         try{ localStorage.removeItem('scei_draft_'+SURVEY.slug);}catch(e){}
         state.step=state.sections.length+1; render();
-      }).catch(function(){
+      }).catch(function(e){
+        if(e && e.message==='closed') return;     // the closed screen is already showing
         if(nx){nx.disabled=false;nx.textContent=t('submit');}
         toast(state.lang==='ar'?'تعذّر الإرسال، حاول مرة أخرى':'Submission failed, please retry');
       });
@@ -439,9 +521,12 @@
         '<p>'+esc(L(ty.body))+'</p>'+
         '<div class="actions">'+
           '<button class="btn btn-ghost" onclick="window.print()">'+t('print')+'</button>'+
-          (CTX.mode==='invitation'?'<button class="btn btn-text" id="editBtn">'+t('edit')+'</button>':'')+
+          (CTX.mode==='invitation' && !CTX.closed?'<button class="btn btn-text" id="editBtn">'+t('edit')+'</button>':'')+
+          (readOnly()?'<button class="btn btn-text" id="viewBtn">'+t('viewResp')+'</button>':'')+
         '</div></div></div>';
       document.getElementById('progressFill').style.width='100%';
+      var vb=document.getElementById('viewBtn');
+      if(vb) vb.addEventListener('click',function(){ state.step=1; render(); });
       var eb=document.getElementById('editBtn');
       if(eb) eb.addEventListener('click',function(){ state.submitted=false; state.step=1; render(); });
     }
@@ -450,7 +535,19 @@
     function findQ(id){ for(var i=0;i<state.sections.length;i++){var qs=state.sections[i].questions;for(var j=0;j<qs.length;j++)if(qs[j].id===id)return qs[j];} return null; }
     function shortTitle(s){ var x=stripSectionPrefix(L(s.title)); return x.length>26?x.slice(0,25)+'…':x; }
     function stripSectionPrefix(x){ return (x||'').replace(/^(Section\s+[IVX0-9]+\s*[—:-]\s*|القسم\s+\S+\s*[—:-]\s*)/,''); }
-    function fmtDate(iso){ try{ var d=new Date(iso); return d.toLocaleDateString(state.lang==='ar'?'ar-EG':'en-GB',{year:'numeric',month:'long',day:'numeric'}); }catch(e){return iso;} }
+    // Date in Cairo time; the time of day is shown only when it is not the default end of day (23:59).
+    function fmtDeadline(iso){
+      try{
+        var d=new Date(iso); if(isNaN(d.getTime())) return iso;
+        var loc=state.lang==='ar'?'ar-EG':'en-GB';
+        var date=d.toLocaleDateString(loc,{timeZone:'Africa/Cairo',year:'numeric',month:'long',day:'numeric'});
+        var hm=d.toLocaleTimeString('en-GB',{timeZone:'Africa/Cairo',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+        if(hm==='23:59') return date;
+        var time=d.toLocaleTimeString(loc,{timeZone:'Africa/Cairo',hour:'2-digit',minute:'2-digit'})+' ('+t('cairo')+')';
+        // Arabic: isolate the time phrase (RLI..PDI) so the digits and the bracket keep their order next to the date.
+        return state.lang==='ar' ? date+'\u060c \u2067'+time+'\u2069' : date+', '+time;
+      }catch(e){ return iso; }
+    }
     function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
     function escAttr(s){ return esc(s).replace(/"/g,'&quot;'); }
     var toastTimer;
@@ -461,7 +558,7 @@
 
     // restore local draft if no server answers
     (function(){
-      if((!CTX.answers || Object.keys(CTX.answers).length===0)){
+      if(!PREVIEW && (!CTX.answers || Object.keys(CTX.answers).length===0)){
         try{ var raw=localStorage.getItem('scei_draft_'+SURVEY.slug);
           if(raw){ var d=JSON.parse(raw); if(d&&d.answers&&Object.keys(d.answers).length){ state.answers=d.answers; if(d.lang)state.lang=d.lang; CTX.resumed=true; } }
         }catch(e){}
@@ -473,7 +570,7 @@
       state.lang=b.getAttribute('data-l'); scheduleSave(); render();
     });
 
-    if(state.submitted && SURVEY.status!=='closed'){ state.step=state.sections.length+1; }
+    if(state.submitted){ state.step=state.sections.length+1; }
     render();
   }
 
@@ -500,7 +597,24 @@
       'قد يكون هذا الرابط غير صحيح أو منتهي الصلاحية. يرجى مراجعة الرابط الوارد في دعوتكم أو التواصل مع أمانة اللجنة.');
   }
 
+  // Admin "Preview": /survey.html#preview inside an iframe receives the draft definition
+  // from the admin page (same origin only) and renders it without saving anything.
+  function waitForPreview(){
+    var started = false;
+    rootEl.innerHTML = '<div></div><div class="stage"><div class="panel ty"><p>Loading preview…</p></div></div>';
+    window.addEventListener('message', function(e){
+      if(e.origin !== location.origin || started) return;
+      var d = e.data;
+      if(!d || d.type !== 'survey-preview' || !d.definition) return;
+      started = true;
+      startSurvey({ survey: d.definition, mode: 'preview', invitation: null, answers: null,
+        lang: d.lang || d.definition.default_lang || 'en', already_complete: false, closed: false });
+    });
+    if(window.parent !== window) window.parent.postMessage({ type: 'survey-preview-ready' }, location.origin);
+  }
+
   function boot(){
+    if(/\/survey\.html$/.test(location.pathname) && location.hash === '#preview'){ waitForPreview(); return; }
     var m = location.pathname.match(/^\/(i|s|c)\/([^\/]+)\/?$/);
     if(!m){ notFound(true); return; }
     var base = { i: '/api/invitation/', s: '/api/survey/', c: '/api/link/' }[m[1]];

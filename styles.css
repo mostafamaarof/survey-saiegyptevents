@@ -244,3 +244,10 @@
     main{display:block;padding:0}
     .panel{box-shadow:none;border:0}
   }
+
+  /* ---------- Deadline hint & admin preview ---------- */
+  .deadline-hint{display:inline-flex;align-items:center;gap:8px;margin-top:14px;padding:8px 14px;border-radius:999px;
+    background:#fff3e2;color:var(--warn);font-size:13.5px;font-weight:600}
+  .deadline-hint svg{width:16px;height:16px;flex:none}
+  .preview-ribbon{position:fixed;top:0;inset-inline:0;z-index:80;text-align:center;font-size:12px;font-weight:700;letter-spacing:.04em;
+    background:var(--warn);color:#fff;padding:4px 10px;pointer-events:none}
