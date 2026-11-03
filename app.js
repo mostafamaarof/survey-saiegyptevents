@@ -107,7 +107,7 @@
       applyDir();
       if(PREVIEW) showPreviewRibbon();
       if(CTX.closed && !state.submitted){ renderClosed(); return; }
-      if(!state.sections.length){ renderNotice(t('noQuestions'),'',SVG.lock); return; }
+      if(!state.sections.length && !PREVIEW){ renderNotice(t('noQuestions'),'',SVG.lock); return; }
       if(state.step===0) renderWelcome();
       else if(state.step>state.sections.length) renderThankYou();
       else renderSection(state.step-1);
@@ -160,11 +160,12 @@
         var nm = state.lang==='ar' ? (inv.sai_name_ar||inv.sai_name) : inv.sai_name;
         badge = '<div class="hero-badge">'+SVG.org+'<span>'+esc(nm)+'</span></div>';
       }
-      var body = (intro.body||[]).map(function(p){return '<p>'+esc(L(p))+'</p>';}).join('');
+      // Plain text only (escaped below); empty paragraphs are skipped so no empty block is drawn.
+      var body = (intro.body||[]).map(function(p){ var tx=L(p); return tx ? '<p>'+esc(tx)+'</p>' : ''; }).join('');
       var chips = '';
-      if(intro.estimated_time) chips += chip(SVG.clock, t('est'), L(intro.estimated_time));
-      if(SURVEY.deadline) chips += chip(SVG.cal, t('deadline'), fmtDeadline(SURVEY.deadline));
-      var hint = closesHint();
+      if(intro.show_time!==false && L(intro.estimated_time)) chips += chip(SVG.clock, t('est'), L(intro.estimated_time));
+      if(intro.show_deadline!==false && SURVEY.deadline) chips += chip(SVG.cal, t('deadline'), fmtDeadline(SURVEY.deadline));
+      var hint = intro.show_deadline===false ? '' : closesHint();
       var resumed = (CTX.resumed) ? '<div class="save-note" style="margin:0 0 18px">'+SVG.disk+esc(t('resumed'))+'</div>' : '';
 
       root.innerHTML =
@@ -172,9 +173,9 @@
         '<div class="stage"><div class="panel">'+
           resumed+ badge+
           '<h1 class="hero-title serif">'+esc(L(intro.title)||L(SURVEY.title))+'</h1>'+
-          (intro.subtitle?'<p class="hero-sub">'+esc(L(intro.subtitle))+'</p>':'')+
-          '<div class="intro-body">'+body+'</div>'+
-          '<div class="meta-chips">'+chips+'</div>'+
+          (L(intro.subtitle)?'<p class="hero-sub">'+esc(L(intro.subtitle))+'</p>':'')+
+          (body?'<div class="intro-body">'+body+'</div>':'')+
+          (chips?'<div class="meta-chips">'+chips+'</div>':'')+
           (hint?'<div class="deadline-hint">'+SVG.clock+'<span>'+esc(hint)+'</span></div>':'')+
         '</div></div>';
       renderNav({back:false, nextLabel:t('start')});
@@ -518,7 +519,7 @@
       root.innerHTML='<div></div><div class="stage"><div class="panel ty">'+
         '<div class="seal">'+SVG.check+'</div>'+
         '<h2 class="serif">'+esc(L(ty.title)||'Thank you')+'</h2>'+
-        '<p>'+esc(L(ty.body))+'</p>'+
+        (L(ty.body)?'<p>'+esc(L(ty.body))+'</p>':'')+
         '<div class="actions">'+
           '<button class="btn btn-ghost" onclick="window.print()">'+t('print')+'</button>'+
           (CTX.mode==='invitation' && !CTX.closed?'<button class="btn btn-text" id="editBtn">'+t('edit')+'</button>':'')+
@@ -572,6 +573,14 @@
 
     if(state.submitted){ state.step=state.sections.length+1; }
     render();
+    return {
+      // used by the admin preview: jump to the welcome or thank-you screen, optionally in another language
+      show: function(view, lang){
+        if(lang==='en' || lang==='ar') state.lang = lang;
+        state.step = view==='thankyou' ? state.sections.length+1 : 0;
+        render();
+      }
+    };
   }
 
   /* ---------- router / boot ---------- */
@@ -600,15 +609,19 @@
   // Admin "Preview": /survey.html#preview inside an iframe receives the draft definition
   // from the admin page (same origin only) and renders it without saving anything.
   function waitForPreview(){
-    var started = false;
+    var inst = null;
     rootEl.innerHTML = '<div></div><div class="stage"><div class="panel ty"><p>Loading preview…</p></div></div>';
     window.addEventListener('message', function(e){
-      if(e.origin !== location.origin || started) return;
+      if(e.origin !== location.origin) return;
       var d = e.data;
-      if(!d || d.type !== 'survey-preview' || !d.definition) return;
-      started = true;
-      startSurvey({ survey: d.definition, mode: 'preview', invitation: null, answers: null,
-        lang: d.lang || d.definition.default_lang || 'en', already_complete: false, closed: false });
+      if(!d || !d.definition) return;
+      if(d.type === 'survey-preview' && !inst){
+        inst = startSurvey({ survey: d.definition, mode: 'preview', invitation: null, answers: null,
+          lang: d.lang || d.definition.default_lang || 'en', already_complete: false, closed: false });
+        if(d.view) inst.show(d.view, d.lang);
+      } else if(d.type === 'survey-preview-view' && inst){
+        inst.show(d.view, d.lang);
+      }
     });
     if(window.parent !== window) window.parent.postMessage({ type: 'survey-preview-ready' }, location.origin);
   }

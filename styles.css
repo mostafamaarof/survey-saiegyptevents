@@ -251,3 +251,6 @@
   .deadline-hint svg{width:16px;height:16px;flex:none}
   .preview-ribbon{position:fixed;top:0;inset-inline:0;z-index:80;text-align:center;font-size:12px;font-weight:700;letter-spacing:.04em;
     background:var(--warn);color:#fff;padding:4px 10px;pointer-events:none}
+
+  /* admin-entered texts are plain text; keep the line breaks the admin typed inside a paragraph */
+  .hero-sub,.intro-body p,.ty p{white-space:pre-line}

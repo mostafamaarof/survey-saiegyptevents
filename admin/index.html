@@ -95,7 +95,7 @@
   .modal-hd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
   .modal-hd h3{font-size:17px}
   .modal-body{padding:18px 20px;overflow:auto;flex:1;min-height:0}
-  .modal.wide .modal-body{padding:0;display:flex}
+  .modal.wide .modal-body{padding:0;display:flex;flex-direction:column}
   .modal-body iframe{flex:1;width:100%;height:100%;border:0;border-radius:0 0 16px 16px;background:var(--bg)}
   .ed-bar{position:sticky;top:61px;z-index:15;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--bg);padding:10px 0 12px}
   .ed-sec{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:18px}
@@ -112,6 +112,21 @@
   .ib:hover:not(:disabled){background:var(--sky-tint)}
   .ib:disabled{opacity:.4;cursor:not-allowed}
   .ib.danger{color:var(--err)}
+  .pv-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}
+  .tx-pair{margin-bottom:14px}
+  .tx-f{position:relative}
+  .tx-f textarea{resize:vertical;min-height:70px}
+  .cc{position:absolute;right:10px;bottom:6px;font-size:11px;color:var(--muted);background:rgba(255,255,255,.85);padding:0 4px;border-radius:4px;pointer-events:none}
+  .tx-f input + .cc{bottom:50%;transform:translateY(50%)}
+  .cc.over{color:var(--err);font-weight:700}
+  .tx-f.rtl .cc{right:auto;left:10px}
+  .tx-f input{padding-right:62px}
+  .tx-f.rtl input{padding-right:13px;padding-left:62px}
+  .hint{font-size:12.5px;color:var(--muted);min-height:0;margin-top:4px}
+  .hint:empty{display:none}
+  .hint.warn{color:var(--warn)}
+  .tx-para{padding:10px 0;border-bottom:1px solid var(--line-soft)}
+  .tx-para:last-of-type{border-bottom:0}
   details>summary{cursor:pointer}
   #verBox table td,#verBox table th{padding:8px 10px}
 </style>
@@ -254,7 +269,7 @@
     if(!slug){ DATA.detail=null; renderApp(); return Promise.resolve(); }
     return api('/api/admin/survey/'+encodeURIComponent(slug)).then(function(d){ DATA.detail=d; current=slug; renderApp(); });
   }
-  function editorDirty(){ return !!(ED && ED.slug===current && JSON.stringify(ED.draft)!==JSON.stringify(ED.orig)); }
+  function editorDirty(){ return !!(ED && ED.slug===current && JSON.stringify(canon(ED.draft))!==JSON.stringify(canon(ED.orig))); }
   function confirmDiscard(){ return !editorDirty() || confirm('You have unsaved question edits. Discard them?'); }
 
   /* ---------- shell ---------- */
@@ -283,16 +298,17 @@
     if(!DATA.surveys.length){ wrap.innerHTML='<div class="card"><p class="muted">No surveys found yet. Use <b>+ New survey</b> to create one.</p></div>'; return; }
     var d=DATA.detail; if(!d){wrap.innerHTML='';return;}
     wrap.innerHTML='<div class="tabs">'+
-      tabBtn('overview','Overview')+tabBtn('responses','Responses')+tabBtn('invitations','Invitations')+tabBtn('questions','Questions')+tabBtn('settings','Settings')+
+      tabBtn('overview','Overview')+tabBtn('responses','Responses')+tabBtn('invitations','Invitations')+tabBtn('questions','Questions')+tabBtn('texts','Welcome &amp; Thank-you')+tabBtn('settings','Settings')+
       '</div><div id="tabBody"></div>';
     [].forEach.call(wrap.querySelectorAll('.tabs button'),function(b){b.onclick=function(){tab=b.dataset.t;renderBody();};});
     if(tab==='overview')renderOverview(d);
     else if(tab==='responses')renderResponses(d);
     else if(tab==='questions')renderQuestions(d);
+    else if(tab==='texts')renderTexts(d);
     else if(tab==='settings')renderSettings(d);
     else renderInvitations(d);
   }
-  function tabBtn(id,label){return '<button data-t="'+id+'" class="'+(tab===id?'on':'')+'">'+label+(id==='questions'&&editorDirty()?' •':'')+'</button>';}
+  function tabBtn(id,label){return '<button data-t="'+id+'" class="'+(tab===id?'on':'')+'">'+label+((id==='questions'||id==='texts')&&editorDirty()?' •':'')+'</button>';}
 
   function newSurveyModal(){
     var dup='<option value="">— Blank survey —</option>'+DATA.surveys.map(function(s){return '<option value="'+esc(s.slug)+'">Duplicate: '+esc(s.title)+'</option>';}).join('');
@@ -730,7 +746,8 @@
     if(save) save.disabled=!dirty||checkDraft().length>0;
     if(disc) disc.disabled=!dirty;
     if(st) st.textContent=dirty?'Unsaved changes':'All changes saved';
-    var tbtn=document.querySelector('.tabs button[data-t="questions"]'); if(tbtn) tbtn.textContent='Questions'+(dirty?' •':'');
+    var tq=document.querySelector('.tabs button[data-t="questions"]'); if(tq) tq.textContent='Questions'+(dirty?' •':'');
+    var tt=document.querySelector('.tabs button[data-t="texts"]'); if(tt) tt.textContent='Welcome & Thank-you'+(dirty?' •':'');
   }
   function drawEditor(){
     document.getElementById('edRoot').innerHTML=sectionsHtml();
@@ -762,7 +779,7 @@
     tb.addEventListener('input',onEdInput);
     tb.addEventListener('change',onEdChange);
     tb.addEventListener('click',onEdClick);
-    document.getElementById('edPreview').onclick=openPreview;
+    document.getElementById('edPreview').onclick=function(){ openPreview('welcome'); };
     document.getElementById('edSave').onclick=saveEditor;
     document.getElementById('edDiscard').onclick=function(){ if(editorDirty() && !confirm('Discard all unsaved question edits?')) return; ED=null; renderBody(); };
     document.getElementById('jsonReset').onclick=function(){ document.getElementById('jsonBox').value=JSON.stringify(ED.draft,null,2); document.getElementById('jsonErr').textContent=''; };
@@ -828,7 +845,7 @@
   function saveEditor(){
     var probs=checkDraft(); if(probs.length){ toast('Fix the listed problems first',3500); return; }
     var btn=document.getElementById('edSave'); btn.disabled=true;
-    api('/api/admin/survey/'+encodeURIComponent(current)+'/definition',{method:'PUT',body:{definition:ED.draft,note:'Edited in admin'}})
+    api('/api/admin/survey/'+encodeURIComponent(current)+'/definition',{method:'PUT',body:{definition:canon(ED.draft),note:'Edited in admin'}})
       .then(function(r){ ED=null; return loadSurvey(current).then(function(){ toast(r.unchanged?'Nothing to save — no changes':'Saved. Previous version kept in history',3000); }); })
       .catch(function(e){
         var list=(e.body&&e.body.problems)?e.body.problems.map(function(p){return p.id?p.id+': '+p.message:p.message;}):[errText(e)];
@@ -837,14 +854,150 @@
   }
 
   /* ---- live preview (renders the draft in the real survey renderer, saves nothing) ---- */
-  function openPreview(){
+  function openPreview(view0){
     if(checkDraft().length) toast('The draft has problems — the preview may look incomplete',3500);
-    var body=openModal('Preview — nothing is saved or sent','<iframe id="pvFrame" src="/survey.html#preview" title="Survey preview"></iframe>',true);
+    var cur={view:view0||'welcome',lang:ED.draft.default_lang==='ar'?'ar':'en'};
+    var bar='<div class="pv-bar"><button class="btn btn-ghost btn-sm" data-pv="welcome">Welcome</button><button class="btn btn-ghost btn-sm" data-pv="thankyou">Thank-you</button>'+
+      '<span style="flex:1"></span><button class="btn btn-ghost btn-sm" data-pl="en">English</button><button class="btn btn-ghost btn-sm" data-pl="ar">العربية</button></div>';
+    var body=openModal('Preview — nothing is saved or sent',bar+'<iframe id="pvFrame" src="/survey.html#preview" title="Survey preview"></iframe>',true);
     var frame=body.querySelector('#pvFrame');
-    function send(){ if(frame.contentWindow) frame.contentWindow.postMessage({type:'survey-preview',definition:clone(ED.draft)},location.origin); }
-    previewListener=function(e){ if(e.origin===location.origin && e.data && e.data.type==='survey-preview-ready') send(); };
+    function mark(){
+      [].forEach.call(body.querySelectorAll('[data-pv]'),function(b){ b.className='btn btn-sm '+(b.dataset.pv===cur.view?'btn-primary':'btn-ghost'); });
+      [].forEach.call(body.querySelectorAll('[data-pl]'),function(b){ b.className='btn btn-sm '+(b.dataset.pl===cur.lang?'btn-primary':'btn-ghost'); });
+    }
+    function post(type){ if(frame.contentWindow) frame.contentWindow.postMessage({type:type,definition:clone(canon(ED.draft)),view:cur.view,lang:cur.lang},location.origin); }
+    previewListener=function(e){ if(e.origin===location.origin && e.data && e.data.type==='survey-preview-ready') post('survey-preview'); };
     window.addEventListener('message',previewListener);
-    frame.addEventListener('load',function(){ setTimeout(send,60); });
+    frame.addEventListener('load',function(){ setTimeout(function(){ post('survey-preview'); },60); });
+    body.querySelector('.pv-bar').addEventListener('click',function(e){
+      var b=e.target.closest('button'); if(!b) return;
+      if(b.dataset.pv) cur.view=b.dataset.pv; else if(b.dataset.pl) cur.lang=b.dataset.pl; else return;
+      mark(); post('survey-preview-view');
+    });
+    mark();
+  }
+
+  /* ================= Welcome & Thank-you tab ================= */
+  // These texts live in the survey definition (intro / thank_you) and are saved through the same
+  // validated, versioned path as questions. They never touch question ids, types or options, so they
+  // are always allowed, even when the survey already has responses.
+  var TEXT_DEFAULT_LIMITS={title:200,subtitle:300,paragraph:2000,time:60,thankTitle:200,thankBody:2000,paragraphs:20};
+  function TL(){ return (DefCheck && DefCheck.TEXT_LIMITS) || TEXT_DEFAULT_LIMITS; }
+
+  function isEmptyV(x){ return x===''||x==null||(Array.isArray(x)&&!x.length)||(x&&typeof x==='object'&&!Array.isArray(x)&&!Object.keys(x).length); }
+  function pruneEmpty(v){
+    if(Array.isArray(v)) return v.map(pruneEmpty).filter(function(x){return !isEmptyV(x);});
+    if(v && typeof v==='object'){ var o={}; Object.keys(v).forEach(function(k){ var p=pruneEmpty(v[k]); if(!isEmptyV(p)) o[k]=p; }); return o; }
+    return v;
+  }
+  // Definition without empty welcome / thank-you texts: what is compared for "unsaved changes" and what is saved.
+  function canon(def){
+    var c=clone(def);
+    ['intro','thank_you'].forEach(function(k){ if(c[k]!==undefined){ c[k]=pruneEmpty(c[k]); if(isEmptyV(c[k])) delete c[k]; } });
+    return c;
+  }
+  // like setP, but creates missing objects / arrays on the way (texts are optional in the definition)
+  function setPC(o,path,val){
+    var ks=path.split('.'), last=ks.pop(), t=o, i;
+    for(i=0;i<ks.length;i++){ var nxt=(i+1<ks.length)?ks[i+1]:last; if(t[ks[i]]==null) t[ks[i]]=/^[0-9]+$/.test(nxt)?[]:{}; t=t[ks[i]]; }
+    t[last]=val;
+  }
+
+  function txPair(path,label,max,o){
+    o=o||{};
+    var en=getP(ED.draft,path+'.en')||'', ar=getP(ED.draft,path+'.ar')||'';
+    function field(lang,val){
+      var id=path+'.'+lang;
+      var a=' data-bind="'+id+'" data-max="'+max+'" maxlength="'+max+'"'+(lang==='ar'?' dir="rtl"':'')+' placeholder="'+(lang==='en'?'English':'العربية')+'"';
+      return '<div class="tx-f'+(lang==='ar'?' rtl':'')+'">'+(o.area?'<textarea rows="'+(o.rows||3)+'"'+a+'>'+esc(val)+'</textarea>':'<input'+a+' value="'+esc(val)+'">')+
+        '<span class="cc" data-cc="'+id+'">'+val.length+'/'+max+'</span></div>';
+    }
+    return '<div class="tx-pair" data-pair="'+path+'" data-empty="'+esc(o.empty||'Empty — nothing is shown.')+'">'+
+      '<label class="fl">'+esc(label)+'</label><div class="grid2">'+field('en',en)+field('ar',ar)+'</div><div class="hint"></div></div>';
+  }
+  function txHints(){
+    [].forEach.call(document.querySelectorAll('.tx-pair'),function(el){
+      var p=el.dataset.pair, en=(getP(ED.draft,p+'.en')||'').trim(), ar=(getP(ED.draft,p+'.ar')||'').trim(), h=el.querySelector('.hint');
+      if(en && !ar){ h.className='hint warn'; h.textContent='Arabic is empty — Arabic readers will see the English text instead.'; }
+      else if(!en && ar){ h.className='hint warn'; h.textContent='English is empty — English readers will see the Arabic text instead.'; }
+      else if(!en && !ar){ h.className='hint'; h.textContent=el.dataset.empty; }
+      else { h.className='hint'; h.textContent=''; }
+    });
+  }
+
+  function txRootHtml(){
+    var L=TL(), intro=ED.draft.intro||{}, paras=intro.body||[];
+    var h='<div class="card"><h3>Welcome page</h3><p class="muted" style="margin-bottom:12px">What respondents read before they start. Plain text only: HTML is shown exactly as typed, and line breaks inside a paragraph are kept.</p>'+
+      txPair('intro.title','Title',L.title,{empty:'Empty — the survey title is shown instead.'})+
+      txPair('intro.subtitle','Subtitle',L.subtitle)+
+      '<div class="ed-list"><div class="ed-list-hd">Paragraphs ('+paras.length+'/'+L.paragraphs+')</div>'+
+      (paras.length?paras.map(function(p,i){
+        return '<div class="tx-para"><div class="row" style="margin-bottom:6px"><b class="muted">Paragraph '+(i+1)+'</b><span class="sp" style="flex:1"></span>'+
+          ib('p-up',{i:i},'↑',i===0,'Move up')+ib('p-down',{i:i},'↓',i===paras.length-1,'Move down')+ib('p-del',{i:i},'✕',false,'Remove this paragraph','danger')+'</div>'+
+          txPair('intro.body.'+i,'',L.paragraph,{area:true,rows:4})+'</div>';
+      }).join(''):'<p class="muted" style="margin:0 0 8px">No paragraphs — the welcome page shows only the title and details.</p>')+
+      '<button class="btn btn-ghost btn-sm" data-act="p-add"'+(paras.length>=L.paragraphs?' disabled':'')+'>+ Add paragraph</button></div>'+
+      txPair('intro.estimated_time','Estimated time (e.g. “20–30 minutes”)',L.time)+
+      '<div class="row" style="margin-top:6px;gap:22px">'+
+        '<label class="chk"><input type="checkbox" data-tgl="intro.show_time"'+(intro.show_time!==false?' checked':'')+'> Show estimated time</label>'+
+        '<label class="chk"><input type="checkbox" data-tgl="intro.show_deadline"'+(intro.show_deadline!==false?' checked':'')+'> Show deadline <span class="muted">(and the “closes in N days” hint)</span></label></div>'+
+      '</div>'+
+      '<div class="card"><h3>Thank-you page</h3><p class="muted" style="margin-bottom:12px">Shown after a respondent submits.</p>'+
+      txPair('thank_you.title','Title',L.thankTitle,{empty:'Empty — “Thank you” is shown instead.'})+
+      txPair('thank_you.body','Message',L.thankBody,{area:true,rows:4})+
+      '</div>';
+    return h;
+  }
+  function drawTexts(){
+    document.getElementById('txRoot').innerHTML=txRootHtml();
+    txHints(); refreshEdStatus();
+  }
+
+  function renderTexts(d){
+    ensureEditor(d);
+    var tb=document.getElementById('tabBody');
+    tb.innerHTML=
+      (d.survey.response_count>0?'<div class="banner info-b">This survey has '+d.survey.response_count+' response'+(d.survey.response_count===1?'':'s')+'. Editing these texts is always allowed — they are not part of the collected data.</div>':'')+
+      '<div id="edProblems"></div>'+
+      '<div class="ed-bar"><button class="btn btn-ghost btn-sm" id="txPvWelcome">Preview welcome</button><button class="btn btn-ghost btn-sm" id="txPvThanks">Preview thank-you</button>'+
+        '<button class="btn btn-primary btn-sm" id="edSave">Save changes</button>'+
+        '<button class="btn btn-ghost btn-sm" id="edDiscard">Discard changes</button><span class="muted" id="edState"></span></div>'+
+      '<div id="txRoot"></div>'+
+      '<div class="card" style="margin-top:18px"><h3>Version history</h3><p class="muted" style="margin-bottom:10px">Every save keeps the previous version; Restore brings one back (the current one is kept too).</p><div id="verBox"><span class="muted">Loading…</span></div></div>';
+    drawTexts();
+    loadVersions();
+    tb.addEventListener('input',onTxInput);
+    tb.addEventListener('change',onTxChange);
+    tb.addEventListener('click',onTxClick);
+    document.getElementById('txPvWelcome').onclick=function(){ openPreview('welcome'); };
+    document.getElementById('txPvThanks').onclick=function(){ openPreview('thankyou'); };
+    document.getElementById('edSave').onclick=saveEditor;
+    document.getElementById('edDiscard').onclick=function(){ if(editorDirty() && !confirm('Discard all unsaved edits?')) return; ED=null; renderBody(); };
+  }
+
+  function onTxInput(e){
+    var t=e.target; if(!t.dataset || !t.dataset.bind) return;
+    setPC(ED.draft,t.dataset.bind,t.value); ED.serverProblems=null;
+    var cc=document.querySelector('[data-cc="'+t.dataset.bind+'"]');
+    if(cc){ cc.textContent=t.value.length+'/'+t.dataset.max; cc.className=t.value.length>=+t.dataset.max?'cc over':'cc'; }
+    txHints(); refreshEdStatus();
+  }
+  function onTxChange(e){
+    var t=e.target; if(!t.dataset || !t.dataset.tgl) return;
+    // "on" is the default, so it is stored only as an explicit false (existing surveys stay unchanged)
+    if(t.checked){ var k=t.dataset.tgl.split('.'); if(ED.draft[k[0]]) delete ED.draft[k[0]][k[1]]; }
+    else setPC(ED.draft,t.dataset.tgl,false);
+    ED.serverProblems=null; refreshEdStatus();
+  }
+  function onTxClick(e){
+    var b=e.target.closest('[data-act]'); if(!b || b.disabled) return;
+    var act=b.dataset.act, i=+b.dataset.i, intro=ED.draft.intro||(ED.draft.intro={}), body=intro.body||(intro.body=[]);
+    if(act==='p-add') body.push({en:'',ar:''});
+    else if(act==='p-up') move(body,i,-1);
+    else if(act==='p-down') move(body,i,1);
+    else if(act==='p-del'){ var p=body[i]||{}; if(((p.en||'')+(p.ar||'')).trim() && !confirm('Remove this paragraph?')) return; body.splice(i,1); }
+    else return;
+    ED.serverProblems=null; drawTexts();
   }
 
   /* ---- version history ---- */

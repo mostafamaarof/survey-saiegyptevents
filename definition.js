@@ -9,6 +9,9 @@ export const CHOICE_TYPES = ['single_choice', 'multiple_choice'];
 const nonEmpty = v => typeof v === 'string' && v.trim() !== '';
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const bilingual = o => isObj(o) && (nonEmpty(o.en) || nonEmpty(o.ar));
+// Respondent-facing texts outside the questions (welcome page, thank-you page). Plain text only; the renderer escapes it.
+export const TEXT_LIMITS = { title: 200, subtitle: 300, paragraph: 2000, time: 60, thankTitle: 200, thankBody: 2000, paragraphs: 20 };
+
 const ID_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 // Keys used to store sub-answers; a question id must not be able to collide with them.
@@ -28,12 +31,48 @@ export function listFields(q) {
   return {};
 }
 
+// `v` is optional; when present it must be { en?: string, ar?: string } with no text over `max` characters.
+function checkText(bad, path, label, v, max) {
+  if (v == null) return;
+  if (!isObj(v)) { bad(path, `${label} must be an object with optional "en" and "ar" texts.`); return; }
+  for (const k of Object.keys(v)) {
+    const t = v[k];
+    if (k !== 'en' && k !== 'ar') { bad(`${path}.${k}`, `${label}: unsupported language "${k}" (use "en" and "ar").`); continue; }
+    if (t != null && typeof t !== 'string') bad(`${path}.${k}`, `${label} (${k.toUpperCase()}) must be plain text, not ${Array.isArray(t) ? 'a list' : typeof t}.`);
+    else if (typeof t === 'string' && t.length > max) bad(`${path}.${k}`, `${label} (${k.toUpperCase()}) is too long: ${t.length} characters, the limit is ${max}.`);
+  }
+}
+
 export function validateDefinition(def) {
   const problems = [];
   const bad = (path, message) => problems.push({ path, message });
 
   if (!isObj(def)) return { ok: false, problems: [{ path: '', message: 'Definition must be a JSON object.' }] };
   if (!bilingual(def.title)) bad('title', 'Survey title needs an English or Arabic text.');
+  if (def.intro != null) {
+    if (!isObj(def.intro)) bad('intro', 'The welcome page settings (intro) must be an object.');
+    else {
+      const i = def.intro;
+      checkText(bad, 'intro.title', 'Welcome title', i.title, TEXT_LIMITS.title);
+      checkText(bad, 'intro.subtitle', 'Welcome subtitle', i.subtitle, TEXT_LIMITS.subtitle);
+      checkText(bad, 'intro.estimated_time', 'Estimated time', i.estimated_time, TEXT_LIMITS.time);
+      if (i.body != null) {
+        if (!Array.isArray(i.body)) bad('intro.body', 'Welcome paragraphs (intro.body) must be a list.');
+        else {
+          if (i.body.length > TEXT_LIMITS.paragraphs) bad('intro.body', `Too many welcome paragraphs: ${i.body.length}, the limit is ${TEXT_LIMITS.paragraphs}.`);
+          i.body.forEach((p, n) => checkText(bad, `intro.body[${n}]`, `Welcome paragraph ${n + 1}`, p, TEXT_LIMITS.paragraph));
+        }
+      }
+      for (const f of ['show_deadline', 'show_time']) if (i[f] != null && typeof i[f] !== 'boolean') bad(`intro.${f}`, `intro.${f} must be true or false.`);
+    }
+  }
+  if (def.thank_you != null) {
+    if (!isObj(def.thank_you)) bad('thank_you', 'The thank-you page settings (thank_you) must be an object.');
+    else {
+      checkText(bad, 'thank_you.title', 'Thank-you title', def.thank_you.title, TEXT_LIMITS.thankTitle);
+      checkText(bad, 'thank_you.body', 'Thank-you text', def.thank_you.body, TEXT_LIMITS.thankBody);
+    }
+  }
   if (!Array.isArray(def.sections) || def.sections.length === 0) {
     bad('sections', 'At least one section is required.');
     return { ok: false, problems };
