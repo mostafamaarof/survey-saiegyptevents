@@ -463,14 +463,17 @@
       '<textarea id="bulk" rows="5" placeholder="Supreme Audit Institution of ...&#10;ديوان المحاسبة ... | ... "></textarea>'+
       '<div class="row" style="margin-top:12px"><button class="btn btn-primary btn-sm" id="createBtn">Generate links</button></div></div>';
     var links=d.links||[];
-    body+='<div class="card"><h3>General invitation link</h3><p class="muted" style="margin-bottom:14px">One shared link for any number of respondents, not tied to a specific SAI (respondents state their institution in the questionnaire). Each respondent gets an independent response. You can disable a link at any time.</p>'+
+    body+='<div class="card"><h3>General invitation link</h3><p class="muted" style="margin-bottom:14px">One shared link for any number of respondents, not tied to a specific SAI (respondents state their institution in the questionnaire). Each respondent gets an independent response. You can disable a link at any time.'+
+      (d.rate_limits?' <br><span class="muted">Abuse protection: at most <b>'+(d.rate_limits.perIp||'∞')+'</b> new responses per network (IP) and <b>'+(d.rate_limits.perLink||'∞')+'</b> per link per hour; updating a response already sent does not count. “Rate-limited” counts the attempts that were refused.</span>':'')+'</p>'+
       '<div class="row"><input id="linkLabel" placeholder="Optional note, e.g. Email blast — November" style="flex:1;min-width:220px" maxlength="120">'+
       '<button class="btn btn-primary btn-sm" id="linkBtn">Create general link</button></div>'+
-      (links.length?'<div style="overflow:auto;margin-top:16px"><table><thead><tr><th>Note</th><th>Responses</th><th>Link</th><th></th></tr></thead><tbody>'+
+      (links.length?'<div style="overflow:auto;margin-top:16px"><table><thead><tr><th>Note</th><th>Responses</th><th>Last 24 h</th><th>Rate-limited</th><th>Link</th><th></th></tr></thead><tbody>'+
         links.map(function(l){
           var link=origin+'/c/'+l.code;
           return '<tr><td>'+(l.label?esc(l.label):'<span class="muted">—</span>')+(l.active?'':' <span class="pill pending">Disabled</span>')+'</td>'+
             '<td>'+l.completed+' <span class="muted">completed / '+l.responses+' total</span></td>'+
+            '<td>'+(l.last_24h||0)+'</td>'+
+            '<td>'+(l.blocked?'<span class="pill started" title="Attempts refused because a limit was reached">'+l.blocked+' blocked</span> <span class="muted">('+(l.blocked_24h||0)+' in 24 h)</span>':'<span class="muted">0</span>')+'</td>'+
             '<td><span class="mono">'+esc(link)+'</span> <span class="copy" data-link="'+esc(link)+'">Copy</span></td>'+
             '<td><span class="copy" data-toggle="'+esc(l.code)+'" data-active="'+(l.active?'1':'0')+'">'+(l.active?'Disable':'Enable')+'</span></td></tr>';
         }).join('')+'</tbody></table></div>':'')+

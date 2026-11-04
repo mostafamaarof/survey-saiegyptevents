@@ -278,3 +278,6 @@
 
   /* admin-entered texts are plain text; keep the line breaks the admin typed inside a paragraph */
   .hero-sub,.intro-body p,.ty p{white-space:pre-line}
+
+  /* submission limit reached (HTTP 429) */
+  .limit-note{margin-top:20px;padding:13px 16px;border-radius:12px;background:#fff3e2;border:1px solid #f3d9b8;color:#7a4a14;font-size:14px;line-height:1.55}

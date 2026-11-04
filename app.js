@@ -513,6 +513,9 @@
           return new Promise(function(res){ setTimeout(res,600); }).then(attempt);
         })
         .then(function(r){
+          if(r.status===429){
+            return r.json().catch(function(){ return {}; }).then(function(j){ var e=new Error('rate limited'); e.rateLimited=true; e.info=j; throw e; });
+          }
           if(r.status===403){
             return r.json().catch(function(){ return {}; }).then(function(j){
               if(j.error==='survey_closed'){ markClosed(j); throw new Error('closed'); }
@@ -523,13 +526,35 @@
           return r.json();
         });
     }
+    // The resume key identifies a respondent on a general link, so it must be unguessable: 20 random bytes (160 bits) from the
+    // browser's cryptographic generator as URL-safe base64 (27 characters). Keys made by older versions (short, timestamp-based)
+    // stay in use as they are: a key is only generated when none is stored. Without crypto there is no key at all, never a weak one.
+    function newKey(){
+      try{
+        var b=new Uint8Array(20); crypto.getRandomValues(b);
+        var s=''; for(var i=0;i<b.length;i++) s+=String.fromCharCode(b[i]);
+        return btoa(s).split('+').join('-').split('/').join('_').split('=').join('');
+      }catch(e){ return null; }
+    }
     function getDraftKey(){
       try{ var k=localStorage.getItem('scei_dk_'+SURVEY.slug);
-        if(!k){ k=(Date.now().toString(36)+Math.random().toString(36).slice(2,8)); localStorage.setItem('scei_dk_'+SURVEY.slug,k);} return k;
+        if(!k){ k=newKey(); if(k) localStorage.setItem('scei_dk_'+SURVEY.slug,k); } return k;
       }catch(e){ return null; }
+    }
+    // The server answers 429 with the message in both languages; it is shown in the respondent's current language.
+    function showRateLimited(info){
+      var ar=state.lang==='ar', m=(info&&info.message)||{};
+      var txt=m[state.lang]||m.en||(ar?'تم تجاوز حد الإرسال. يرجى المحاولة لاحقًا.':'The submission limit was reached. Please try again later.');
+      var mins=info&&info.retry_after?Math.max(1,Math.ceil(info.retry_after/60)):0;
+      if(mins) txt += ar ? ' حاول مجددًا بعد نحو '+mins+' دقيقة.' : ' Try again in about '+mins+' minute'+(mins===1?'':'s')+'.';
+      var panel=root.querySelector('.panel'); if(!panel){ toast(txt); return; }
+      var old=panel.querySelector('.limit-note'); if(old) old.remove();
+      var n=document.createElement('div'); n.className='limit-note'; n.setAttribute('role','alert'); n.textContent=txt;
+      panel.appendChild(n); n.scrollIntoView({behavior:'smooth',block:'center'});
     }
     function doSubmit(){
       if(!validateSection(state.step-1)) return;
+      var ln=root.querySelector('.limit-note'); if(ln) ln.remove();
       if(PREVIEW){ state.submitted=true; state.submittedAt=new Date(nowMs()).toISOString(); state.step=state.sections.length+1; render(); return; }
       var nx=document.getElementById('navNext'); if(nx){nx.disabled=true;nx.textContent=t('reviewSubmitting');}
       clearTimeout(saveTimer);                         // a pending draft autosave must not follow the submission
@@ -540,6 +565,7 @@
       }).catch(function(e){
         if(e && e.message==='closed') return;     // the closed screen is already showing
         if(nx){nx.disabled=false;nx.textContent=t('submit');}
+        if(e && e.rateLimited){ showRateLimited(e.info); return; }
         toast(state.lang==='ar'?'تعذّر الإرسال، حاول مرة أخرى':'Submission failed, please retry');
       });
     }
