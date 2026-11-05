@@ -281,3 +281,17 @@
 
   /* submission limit reached (HTTP 429) */
   .limit-note{margin-top:20px;padding:13px 16px;border-radius:12px;background:#fff3e2;border:1px solid #f3d9b8;color:#7a4a14;font-size:14px;line-height:1.55}
+
+  /* ---------- loading indicator and load-failure diagnostic ---------- */
+  .boot-loading{min-height:55vh;grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;color:var(--ink-soft);padding:40px 22px}
+  .boot-loading .spinner{width:38px;height:38px;border-radius:50%;border:3.5px solid var(--line);border-top-color:var(--blue);animation:bootspin .9s linear infinite;margin-bottom:12px}
+  @keyframes bootspin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.boot-loading .spinner{animation-duration:2.6s}}
+  .boot-loading p{margin:0;font-size:15px}
+  .boot-loading .boot-slow{margin-top:12px;font-size:13.5px;color:var(--muted)}
+  .boot-loading .boot-slow[hidden]{display:none}
+  .diag-panel .diag-ar{margin-top:22px;padding-top:22px;border-top:1px solid var(--line-soft);font-family:var(--arab)}
+  .diag-code{margin:24px 0 0;text-align:start}
+  .diag-label{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .diag-code code{display:block;padding:12px 14px;background:var(--sky-tint);border:1px solid var(--line);border-radius:10px;font:12.5px/1.6 ui-monospace,Menlo,Consolas,monospace;color:var(--ink);word-break:break-all;user-select:all;text-align:left}
+  .diag-hint{font-size:13px;color:var(--muted);margin-top:14px}

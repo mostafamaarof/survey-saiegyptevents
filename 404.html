@@ -30,7 +30,13 @@
   <div class="progress-rail"><div class="progress-fill" id="progressFill"></div></div>
 </header>
 
-<main id="root"></main>
+<main id="root"><div class="boot-loading" id="bootLoading" role="status">
+  <div class="spinner" aria-hidden="true"></div>
+  <p>Loading the questionnaire…</p>
+  <p dir="rtl" lang="ar">جارٍ تحميل الاستبيان…</p>
+  <p class="boot-slow" id="bootSlow" hidden>This is taking longer than usual — please wait a moment.<br><span dir="rtl" lang="ar">يستغرق الأمر وقتًا أطول من المعتاد — يرجى الانتظار قليلًا.</span></p>
+</div></main>
+<noscript><p style="padding:24px;text-align:center">Please enable JavaScript to open this questionnaire. · يرجى تفعيل JavaScript لفتح هذا الاستبيان.</p></noscript>
 <div class="toast" id="toast"></div>
 
 <script src="/config.js"></script>

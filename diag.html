@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Connection test</title>
+<style>
+  :root{--ink:#0a2540;--ink-soft:#28415f;--blue:#135ca8;--sky:#2b9ef0;--sky-tint:#f4f9fe;--line:#d7e3f0;--bg:#eef4fb;--muted:#607a96;--ok:#1f9d6b;--warn:#c7702a;--err:#cf3b4d}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55;padding:28px 16px 60px}
+  .card{max-width:760px;margin:0 auto;background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px 30px;box-shadow:0 1px 2px rgba(10,37,64,.04),0 14px 40px rgba(10,37,64,.08)}
+  h1{font-size:22px;margin-bottom:6px}
+  .ar{direction:rtl;text-align:right;margin-top:6px}
+  p.lead{color:var(--ink-soft);font-size:14.5px;margin-top:10px}
+  table{width:100%;border-collapse:collapse;margin:22px 0 8px;font-size:14px}
+  td,th{padding:9px 8px;border-bottom:1px solid #e9f0f8;text-align:start;vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .st{font-weight:700;white-space:nowrap}
+  .st.ok{color:var(--ok)}.st.fail{color:var(--err)}.st.warn{color:var(--warn)}.st.run{color:var(--muted)}
+  .d{color:var(--muted);font-size:12.5px;word-break:break-all}
+  .verdict{margin:18px 0 6px;padding:13px 16px;border-radius:12px;font-size:14.5px;border:1px solid var(--line);background:var(--sky-tint)}
+  .verdict.ok{background:#e8f6ef;border-color:#bfe6d3}.verdict.bad{background:#fdecee;border-color:#f1c2c8}
+  code{display:block;margin-top:10px;padding:12px 14px;background:var(--sky-tint);border:1px solid var(--line);border-radius:10px;font:12.5px/1.6 ui-monospace,Menlo,Consolas,monospace;word-break:break-all;direction:ltr;text-align:left;user-select:all}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  button{font:inherit;font-weight:600;font-size:14px;padding:10px 18px;border-radius:10px;border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);cursor:pointer}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  small{color:var(--muted)}
+  @media(max-width:520px){.card{padding:20px 16px}}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Connection test</h1>
+  <h1 class="ar" lang="ar" dir="rtl">اختبار الاتصال</h1>
+  <p class="lead">This page checks whether your device and network can reach the survey system. It sends no personal data and changes nothing. If something fails, please copy the code at the bottom and send it to the survey secretariat.</p>
+  <p class="lead ar" lang="ar" dir="rtl">تتحقق هذه الصفحة من قدرة جهازكم وشبكتكم على الوصول إلى نظام الاستبيان. لا ترسل أي بيانات شخصية ولا تغيّر أي شيء. إذا فشل أحد الفحوص فيرجى نسخ الرمز في الأسفل وإرساله إلى أمانة الاستبيان.</p>
+
+  <table aria-live="polite">
+    <thead><tr><th>Test · الفحص</th><th>Result · النتيجة</th><th>Details · التفاصيل</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="verdict" class="verdict" hidden></div>
+  <div><small>Report code · رمز التقرير</small><code id="report">…</code></div>
+  <div class="row">
+    <button class="primary" id="copy">Copy code / نسخ الرمز</button>
+    <button id="again">Run again / إعادة الاختبار</button>
+  </div>
+</div>
+
+<script src="/config.js"></script>
+<script>
+(function(){
+  "use strict";
+  var hosts = [String(window.SURVEY_API || '').replace(/\/+$/, '')].concat((window.SURVEY_API_FALLBACKS || []).map(function(h){ return String(h).replace(/\/+$/, ''); })).filter(Boolean);
+  var rowsEl = document.getElementById('rows'), report = '';
+
+  function esc(x){ return String(x == null ? '' : x).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function hostOf(u){ try{ return new URL(u).host; }catch(e){ return u; } }
+  function short(s, n){ s = String(s == null ? '' : s); var o = ''; for(var i = 0; i < s.length && o.length < n; i++){ var c = s.charCodeAt(i); o += (c >= 32 && c < 127) ? s.charAt(i) : '?'; } return o; }
+  function limited(url, opts, ms){
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null, to = ctl ? setTimeout(function(){ ctl.abort(); }, ms) : null;
+    opts = opts || {}; if(ctl) opts.signal = ctl.signal;
+    return fetch(url, opts).then(function(r){ clearTimeout(to); return r; }, function(e){ clearTimeout(to); throw e; });
+  }
+  function addRow(en, ar){
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + esc(en) + '<br><small dir="rtl" lang="ar">' + esc(ar) + '</small></td><td class="st run">…</td><td class="d"></td>';
+    rowsEl.appendChild(tr);
+    return { set: function(state, label, detail){ var st = tr.children[1]; st.className = 'st ' + state; st.textContent = label; tr.children[2].textContent = detail || ''; } };
+  }
+
+  // each test resolves to a short token for the report line
+  function testHost(base){
+    var h = hostOf(base), out = {};
+    var rReach = addRow('Reach the survey server (' + h + ')', 'الوصول إلى خادم الاستبيان'),
+        rCors = addRow('Read its answer from this page (CORS)', 'قراءة ردّه من هذه الصفحة (CORS)'),
+        rOpen = addRow('Load public data', 'تحميل بيانات عامة');
+    return limited(base + '/', { mode: 'no-cors' }, 10000).then(function(){
+      out.reach = 'OK'; rReach.set('ok', 'OK', 'The server answered.');
+    }, function(e){
+      out.reach = 'FAIL'; rReach.set('fail', 'FAIL', 'No connection (blocked, offline, DNS or timeout).');
+    }).then(function(){
+      return limited(base + '/', { headers: { 'Accept': 'application/json' } }, 10000).then(function(r){
+        return r.text().then(function(t){
+          var j = null; try{ j = JSON.parse(t); }catch(e){}
+          if(r.ok && j && j.ok){ out.cors = 'OK(' + r.status + ')'; out.json = 'OK'; rCors.set('ok', 'OK', 'HTTP ' + r.status + ', valid JSON.'); }
+          else if(!r.ok){ out.cors = 'HTTP-' + r.status; out.json = 'n/a'; rCors.set('fail', 'FAIL', 'HTTP ' + r.status + ' (' + short((r.headers.get('content-type') || '').split(';')[0], 40) + ').'); }
+          else { out.cors = 'OK(' + r.status + ')'; out.json = 'NOT-JSON'; rCors.set('fail', 'FAIL', 'The answer was not from the survey server (' + short((r.headers.get('content-type') || '').split(';')[0], 40) + ', ' + t.length + ' bytes).'); }
+        });
+      }, function(){
+        out.cors = out.reach === 'OK' ? 'BLOCKED' : 'NET'; out.json = 'n/a';
+        rCors.set('fail', 'FAIL', out.reach === 'OK' ? 'Reachable, but the answer was blocked (browser extension, security software or firewall).' : 'Not reachable.');
+      });
+    }).then(function(){
+      return limited(base + '/api/surveys/open', { headers: { 'Accept': 'application/json' } }, 10000).then(function(r){
+        return r.json().then(function(j){ out.open = (r.ok && Array.isArray(j)) ? 'OK(' + r.status + ')' : 'BAD(' + r.status + ')'; rOpen.set(r.ok ? 'ok' : 'fail', r.ok ? 'OK' : 'FAIL', 'HTTP ' + r.status); },
+          function(){ out.open = 'NOT-JSON'; rOpen.set('fail', 'FAIL', 'Not JSON.'); });
+      }, function(){ out.open = 'FAIL'; rOpen.set('fail', 'FAIL', 'No answer.'); });
+    }).then(function(){ return h + ' reach=' + out.reach + ' cors=' + out.cors + ' json=' + out.json + ' open=' + out.open + (out.reach === 'OK' && out.cors === 'OK(200)' && out.json === 'OK' ? ' PASS' : ' FAIL'); });
+  }
+
+  function run(){
+    rowsEl.innerHTML = ''; document.getElementById('verdict').hidden = true; document.getElementById('report').textContent = '…';
+    var meta = addRow('This page', 'هذه الصفحة');
+    meta.set('ok', 'OK', location.host + ' · online=' + (navigator.onLine === false ? 'no' : 'yes') + ' · ' + short(navigator.language, 12));
+    var parts = [], fonts = null;
+    var chain = Promise.resolve();
+    hosts.forEach(function(b){ chain = chain.then(function(){ return testHost(b); }).then(function(line){ parts.push(line); }); });
+    chain = chain.then(function(){
+      var rf = addRow('Google Fonts (optional, only affects the look)', 'خطوط Google (اختياري، يؤثر على الشكل فقط)');
+      return limited('https://fonts.googleapis.com/', { mode: 'no-cors' }, 8000).then(function(){ fonts = 'OK'; rf.set('ok', 'OK', ''); }, function(){ fonts = 'BLOCKED'; rf.set('warn', 'WARN', 'Not reachable: the survey still works with default fonts.'); });
+    }).then(function(){
+      var ra = addRow('This site\'s own files', 'ملفات هذا الموقع');
+      return limited('/app.js', {}, 10000).then(function(r){ ra.set(r.ok ? 'ok' : 'fail', r.ok ? 'OK' : 'FAIL', 'HTTP ' + r.status); return r.ok ? 'OK' : 'HTTP-' + r.status; }, function(){ ra.set('fail', 'FAIL', 'No answer.'); return 'NET'; });
+    }).then(function(assets){
+      var pass = parts.some(function(p){ return /PASS$/.test(p); });
+      report = ['SV-DIAG-TEST v1', 'utc=' + new Date().toISOString().slice(0, 19) + 'Z', 'site=' + location.host, 'online=' + (navigator.onLine === false ? 'no' : 'yes'),
+        'ua=' + short(navigator.userAgent, 70)].concat(parts.map(function(p){ return 'api[' + p + ']'; }), ['fonts=' + fonts, 'assets=' + assets]).join(' | ');
+      document.getElementById('report').textContent = report;
+      var v = document.getElementById('verdict'); v.hidden = false;
+      if(pass){ v.className = 'verdict ok'; v.innerHTML = 'Your connection to the survey system works. If the questionnaire still does not open, please send the code below.<br><span dir="rtl" lang="ar">اتصالكم بنظام الاستبيان يعمل. إذا لم يُفتح الاستبيان فيرجى إرسال الرمز أدناه.</span>'; }
+      else { v.className = 'verdict bad'; v.innerHTML = 'Your device or network cannot use the survey system correctly. Try another network (for example mobile data) or ask your IT team to allow the host(s) listed above, and send the code below to the survey secretariat.<br><span dir="rtl" lang="ar">جهازكم أو شبكتكم لا يستطيع استخدام نظام الاستبيان بشكل سليم. جرّبوا شبكة أخرى (مثل بيانات الهاتف) أو اطلبوا من فريق تقنية المعلومات السماح بالمضيف المذكور أعلاه، وأرسلوا الرمز أدناه إلى أمانة الاستبيان.</span>'; }
+    });
+    return chain;
+  }
+
+  document.getElementById('again').onclick = run;
+  document.getElementById('copy').onclick = function(){
+    var b = this, done = function(){ b.textContent = 'Copied ✓ / تم النسخ'; };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(report).then(done, function(){});
+    else { var ta = document.createElement('textarea'); ta.value = report; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); done(); }catch(e){} ta.remove(); }
+  };
+  run();
+})();
+</script>
+</body>
+</html>

@@ -746,21 +746,154 @@
     if(window.parent !== window) window.parent.postMessage({ type: 'survey-preview-ready' }, location.origin);
   }
 
+  /* ---------- loading: time limit, one retry, and a diagnostic code when it fails ---------- */
+  var LOAD_MS = window.SURVEY_LOAD_TIMEOUT_MS || 15000;
+  var pageKind = '?';
+  function escH(x){ return String(x == null ? '' : x).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function delay(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  function merge(a, b){ for(var k in b) a[k] = b[k]; return a; }
+  function sanitize(x, n){ x = String(x == null ? '' : x); var o = ''; for(var i = 0; i < x.length && o.length < n; i++){ var c = x.charCodeAt(i); o += (c >= 32 && c < 127) ? x.charAt(i) : '?'; } return o; }
+  function apiHost(){ try{ return new URL(API || location.href).host; }catch(e){ return sanitize(API, 60); } }
+  function diag(code, info){ var d = info || {}; d.code = code; return d; }
+
+  // One load attempt. Resolves {ctx} or {notFound}; rejects with a diagnostic {code, ...}.
+  function attemptLoad(url){
+    var t0 = Date.now(), timedOut = false;
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ timedOut = true; ctl.abort(); }, LOAD_MS) : null;
+    return fetch(url, { headers: { 'Accept': 'application/json' }, signal: ctl ? ctl.signal : undefined }).then(function(r){
+      var ct = r.headers.get('content-type') || '';
+      return r.text().then(function(text){
+        clearTimeout(timer);
+        var json = null; try{ json = JSON.parse(text); }catch(e){}
+        var base = { status: r.status, ct: sanitize(ct.split(';')[0], 40), len: text.length, ms: Date.now() - t0 };
+        if(r.status === 404){
+          // Only the survey server's own JSON answer means "link not found". A 404 from a proxy / CDN / gateway must never
+          // tell the respondent that their link is wrong.
+          if(json && json.error === 'not_found') return { notFound: true };
+          throw diag('HTTP-404', merge(base, { retry: false }));
+        }
+        if(!r.ok) throw diag('HTTP-' + r.status, merge(base, { retry: r.status >= 500 }));
+        if(!json || typeof json !== 'object' || !json.survey) throw diag('NOT-JSON', merge(base, { retry: true }));
+        return { ctx: json };
+      }, function(){ clearTimeout(timer); throw diag('NET', { timedOut: timedOut, ms: Date.now() - t0, retry: true }); });
+    }, function(){ clearTimeout(timer); throw diag('NET', { timedOut: timedOut, ms: Date.now() - t0, retry: true }); });
+  }
+  // One automatic retry for failures that can be temporary (no answer, 5xx, a non-JSON page); never for 4xx.
+  function loadSurveyData(url){
+    var attempts = 0;
+    function go(){
+      attempts++;
+      return attemptLoad(url).catch(function(d){
+        if(!d || !d.code) throw diag('APP-ERR', { err: sanitize(d && d.message, 80), attempts: attempts });
+        d.attempts = attempts;
+        if(attempts < 2 && d.retry) return delay(800).then(go);
+        throw d;
+      });
+    }
+    return go();
+  }
+  // "No answer" is NET if the server cannot be reached at all, BLOCKED if it can (a no-cors request succeeds whenever the server
+  // answers, whatever CORS says): then the browser, an extension or a security product refused the real response.
+  function classify(d){
+    if(d.code !== 'NET') return Promise.resolve(d);
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ ctl.abort(); }, window.SURVEY_PROBE_TIMEOUT_MS || 8000) : null;
+    return fetch(API + '/', { mode: 'no-cors', signal: ctl ? ctl.signal : undefined }).then(
+      function(){ clearTimeout(timer); d.code = 'BLOCKED'; return d; },
+      function(){ clearTimeout(timer); return d; });
+  }
+
+  var DIAG_TEXT = {
+    NET: {
+      en: 'Your device could not connect to the survey server ({host}). Please check your internet connection and try again. If you are on an office or institutional network, ask your IT team to allow access to {host}, or open the link on another network (for example mobile data).',
+      ar: 'لم يتمكن جهازكم من الاتصال بخادم الاستبيان ({host}). يرجى التحقق من اتصالكم بالإنترنت والمحاولة مجددًا. وإذا كنتم على شبكة مؤسسية فيرجى مطالبة فريق تقنية المعلومات بالسماح بالوصول إلى {host}، أو افتحوا الرابط من شبكة أخرى (مثل بيانات الهاتف).' },
+    BLOCKED: {
+      en: 'The survey server ({host}) is reachable, but its answer was blocked before it reached this page. This is usually a browser extension, security software or a firewall. Try another browser or a private window, or open the link on another network.',
+      ar: 'خادم الاستبيان ({host}) متاح، لكن ردّه حُجب قبل أن يصل إلى هذه الصفحة. غالبًا يكون السبب إضافة في المتصفح أو برنامج حماية أو جدار ناري. جرّبوا متصفحًا آخر أو نافذة خاصة، أو افتحوا الرابط من شبكة أخرى.' },
+    'HTTP-403': {
+      en: 'The request was refused (code 403) by the server or by a network device between you and it. Try another browser or network. If you opened the link inside an email preview, open it in your normal browser instead.',
+      ar: 'رُفض الطلب (الرمز 403) من الخادم أو من جهاز شبكة بينكم وبينه. جرّبوا متصفحًا أو شبكة أخرى. وإذا فتحتم الرابط داخل معاينة البريد فافتحوه في المتصفح العادي.' },
+    'HTTP-404': {
+      en: 'A network device between you and the survey server answered "not found". Your link may have been altered by email software: copy the full link again and open it in your browser, or try another network.',
+      ar: 'ردّ جهاز شبكة بينكم وبين خادم الاستبيان بعبارة "غير موجود". قد يكون برنامج البريد قد غيّر الرابط: انسخوا الرابط كاملًا مرة أخرى وافتحوه في المتصفح، أو جرّبوا شبكة أخرى.' },
+    'HTTP-429': {
+      en: 'Too many requests were received from your network. Please wait a few minutes and try again.',
+      ar: 'وصل عدد كبير من الطلبات من شبكتكم. يرجى الانتظار بضع دقائق ثم المحاولة مجددًا.' },
+    'HTTP-5XX': {
+      en: 'The survey server had a temporary problem. Please try again in a few minutes.',
+      ar: 'واجه خادم الاستبيان مشكلة مؤقتة. يرجى المحاولة مرة أخرى بعد بضع دقائق.' },
+    'HTTP-4XX': {
+      en: 'The request was refused. Try another browser or network.',
+      ar: 'رُفض الطلب. جرّبوا متصفحًا أو شبكة أخرى.' },
+    'NOT-JSON': {
+      en: 'The answer received did not come from the survey server. It is usually a page from a security gateway or a sign-in page of the network you are on. Try another network (for example mobile data).',
+      ar: 'الرد الذي وصل لم يأتِ من خادم الاستبيان. غالبًا يكون صفحة من بوابة أمان أو صفحة تسجيل دخول للشبكة التي تستخدمونها. جرّبوا شبكة أخرى (مثل بيانات الهاتف).' },
+    'APP-ERR': {
+      en: 'The page could not display the questionnaire. Please try again, or try another browser.',
+      ar: 'تعذّر على الصفحة عرض الاستبيان. يرجى المحاولة مرة أخرى أو استخدام متصفح آخر.' }
+  };
+  function diagExplain(d){
+    var key = DIAG_TEXT[d.code] ? d.code : (/^HTTP-5/.test(d.code) ? 'HTTP-5XX' : /^HTTP-/.test(d.code) ? 'HTTP-4XX' : 'APP-ERR');
+    var host = apiHost(), t = DIAG_TEXT[key];
+    return { en: t.en.split('{host}').join(host), ar: t.ar.split('{host}').join(host) };
+  }
+  // One copyable line. It never contains the invitation token / link code (only the kind of page) or any personal data.
+  function diagLine(d){
+    var line = ['SV-DIAG v1', d.code, 'host=' + apiHost(), 'site=' + location.host, 'page=' + pageKind,
+      'online=' + (navigator.onLine === false ? 'no' : 'yes'), 'attempts=' + (d.attempts || 1), 'ms=' + (d.ms || 0)];
+    if(d.status) line.push('status=' + d.status);
+    if(d.ct !== undefined) line.push('ct=' + (d.ct || 'none'));
+    if(d.len !== undefined) line.push('len=' + d.len);
+    if(d.timedOut) line.push('timeout=yes');
+    if(d.err) line.push('err=' + d.err);
+    line.push('utc=' + new Date().toISOString().slice(0, 19) + 'Z');
+    return line.join(' | ');
+  }
+  function copyText(text, btn){
+    var done = function(){ btn.textContent = 'Copied ✓ / تم النسخ'; };
+    function fallback(){
+      var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try{ if(document.execCommand('copy')) done(); }catch(e){}
+      ta.remove();
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+  }
+  function showDiag(d){
+    var text = diagLine(d), ex = diagExplain(d);
+    document.title = 'Unable to load the questionnaire';
+    var lt = document.getElementById('langToggle'); if(lt) lt.style.display = 'none';
+    rootEl.innerHTML = '<div></div><div class="stage"><div class="panel ty diag-panel" role="alert">'+
+      '<h2 class="serif">Unable to load the questionnaire</h2><p>'+escH(ex.en)+'</p>'+
+      '<div dir="rtl" lang="ar" class="diag-ar"><h2>تعذّر تحميل الاستبيان</h2><p>'+escH(ex.ar)+'</p></div>'+
+      '<div class="diag-code"><div class="diag-label">Diagnostic code · رمز التشخيص</div><code id="diagCode" dir="ltr">'+escH(text)+'</code></div>'+
+      '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" id="retryBtn">Retry / إعادة المحاولة</button>'+
+      '<button class="btn btn-ghost" id="copyBtn">Copy code / نسخ الرمز</button>'+
+      '<a class="btn btn-text" href="/diag.html">Connection test / اختبار الاتصال</a></div>'+
+      '<p class="diag-hint">If the problem continues, please send this code to the survey secretariat. / إذا استمرت المشكلة فيرجى إرسال هذا الرمز إلى أمانة الاستبيان.</p>'+
+      '</div></div>';
+    document.getElementById('retryBtn').onclick = function(){ location.reload(); };
+    var cb = document.getElementById('copyBtn'); cb.onclick = function(){ copyText(text, cb); };
+  }
+
   function boot(){
     if(/\/survey\.html$/.test(location.pathname) && location.hash === '#preview'){ waitForPreview(); return; }
     var m = location.pathname.match(/^\/(i|s|c)\/([^\/]+)\/?$/);
     if(!m){ notFound(true); return; }
+    pageKind = m[1];
     var base = { i: '/api/invitation/', s: '/api/survey/', c: '/api/link/' }[m[1]];
     var url = API + base + encodeURIComponent(decodeURIComponent(m[2]));
-    fetch(url, { headers: { 'Accept': 'application/json' } }).then(function(r){
-      if(r.status === 404){ notFound(false); return null; }
-      if(!r.ok) throw new Error('http ' + r.status);
-      return r.json();
-    }).then(function(ctx){
-      if(ctx) startSurvey(ctx);
-    }).catch(function(){
-      message('Unable to load the questionnaire','Please check your connection and try again.',
-        'تعذّر تحميل الاستبيان','يرجى التحقق من الاتصال بالإنترنت والمحاولة مرة أخرى.', true);
+    // the page shell already shows a spinner; after a few seconds tell the respondent that it is taking longer than usual
+    var slow = setTimeout(function(){ var el = document.getElementById('bootSlow'); if(el) el.hidden = false; }, 4000);
+    loadSurveyData(url).then(function(res){
+      clearTimeout(slow);
+      if(res.notFound){ notFound(false); return; }
+      try{ startSurvey(res.ctx); }
+      catch(e){ showDiag(diag('APP-ERR', { err: sanitize(e && e.message, 80), attempts: 1 })); }
+    }, function(d){
+      clearTimeout(slow);
+      classify(d).then(showDiag);
     });
   }
   boot();
