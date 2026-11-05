@@ -114,12 +114,13 @@
       var ra = addRow('This site\'s own files', 'ملفات هذا الموقع');
       return limited('/app.js', {}, 10000).then(function(r){ ra.set(r.ok ? 'ok' : 'fail', r.ok ? 'OK' : 'FAIL', 'HTTP ' + r.status); return r.ok ? 'OK' : 'HTTP-' + r.status; }, function(){ ra.set('fail', 'FAIL', 'No answer.'); return 'NET'; });
     }).then(function(assets){
-      var pass = parts.some(function(p){ return /PASS$/.test(p); });
+      var pass = /PASS$/.test(parts[0] || ''), viaBackup = !pass && parts.slice(1).some(function(p){ return /PASS$/.test(p); });
       report = ['SV-DIAG-TEST v1', 'utc=' + new Date().toISOString().slice(0, 19) + 'Z', 'site=' + location.host, 'online=' + (navigator.onLine === false ? 'no' : 'yes'),
         'ua=' + short(navigator.userAgent, 70)].concat(parts.map(function(p){ return 'api[' + p + ']'; }), ['fonts=' + fonts, 'assets=' + assets]).join(' | ');
       document.getElementById('report').textContent = report;
       var v = document.getElementById('verdict'); v.hidden = false;
-      if(pass){ v.className = 'verdict ok'; v.innerHTML = 'Your connection to the survey system works. If the questionnaire still does not open, please send the code below.<br><span dir="rtl" lang="ar">اتصالكم بنظام الاستبيان يعمل. إذا لم يُفتح الاستبيان فيرجى إرسال الرمز أدناه.</span>'; }
+      if(viaBackup){ v.className = 'verdict'; v.innerHTML = 'The survey system works through its backup address, but the main address could not be reached from your network. The survey will still open for you; please send the code below to the survey secretariat so that we can fix the main address.<br><span dir="rtl" lang="ar">يعمل نظام الاستبيان عبر العنوان الاحتياطي، لكن تعذّر الوصول إلى العنوان الرئيسي من شبكتكم. سيُفتح الاستبيان لديكم رغم ذلك، ويرجى إرسال الرمز أدناه إلى أمانة الاستبيان لنعالج العنوان الرئيسي.</span>'; }
+      else if(pass){ v.className = 'verdict ok'; v.innerHTML = 'Your connection to the survey system works. If the questionnaire still does not open, please send the code below.<br><span dir="rtl" lang="ar">اتصالكم بنظام الاستبيان يعمل. إذا لم يُفتح الاستبيان فيرجى إرسال الرمز أدناه.</span>'; }
       else { v.className = 'verdict bad'; v.innerHTML = 'Your device or network cannot use the survey system correctly. Try another network (for example mobile data) or ask your IT team to allow the host(s) listed above, and send the code below to the survey secretariat.<br><span dir="rtl" lang="ar">جهازكم أو شبكتكم لا يستطيع استخدام نظام الاستبيان بشكل سليم. جرّبوا شبكة أخرى (مثل بيانات الهاتف) أو اطلبوا من فريق تقنية المعلومات السماح بالمضيف المذكور أعلاه، وأرسلوا الرمز أدناه إلى أمانة الاستبيان.</span>'; }
     });
     return chain;

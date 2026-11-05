@@ -138,7 +138,20 @@
 <script>
 (function(){
   "use strict";
-  var API=String(window.SURVEY_API||'').replace(/\/+$/,'');
+  var API_LIST=[window.SURVEY_API].concat(window.SURVEY_API_FALLBACKS||[]).map(function(h){return String(h||'').replace(/\/+$/,'');}).filter(function(h,i,a){return h&&a.indexOf(h)===i;});
+  var API=API_LIST[0]||'';
+  // use the first configured host that answers (primary first, then the fallbacks); done once per page load
+  function pickHost(){
+    if(API_LIST.length<2) return Promise.resolve();
+    function tryAt(i){
+      if(i>=API_LIST.length) return Promise.resolve();
+      var ctl=(typeof AbortController!=='undefined')?new AbortController():null, t=ctl?setTimeout(function(){ctl.abort();},6000):null;
+      return fetch(API_LIST[i]+'/',{headers:{'Accept':'application/json'},signal:ctl?ctl.signal:undefined}).then(function(r){
+        clearTimeout(t); if(!r.ok) throw new Error('http '+r.status); API=API_LIST[i];
+      }).catch(function(){ clearTimeout(t); return tryAt(i+1); });
+    }
+    return tryAt(0);
+  }
   var app=document.getElementById('app');
   var TOKEN=sessionStorage.getItem('scei_admin_token')||'';
   var DATA=null, current=null, tab='overview';
@@ -1025,7 +1038,7 @@
 
   function start(){ if(TOKEN){ boot().catch(function(){renderLogin();}); } else { renderLogin(); } }
   // The validator is shared with the Worker (site/definition.js); the editor still works without it.
-  import('/definition.js').then(function(m){ DefCheck=m; }).catch(function(){}).then(start);
+  import('/definition.js').then(function(m){ DefCheck=m; }).catch(function(){}).then(pickHost).then(start);
 })();
 </script>
 </body>

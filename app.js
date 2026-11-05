@@ -4,7 +4,29 @@
  * The API base URL comes from config.js (window.SURVEY_API). */
 (function(){
   "use strict";
-  var API = String(window.SURVEY_API || '').replace(/\/+$/, '');
+  // API hosts (config.js): the first-party host is the primary, the others (e.g. workers.dev) are automatic fallbacks.
+  var API_CONFIGURED = [window.SURVEY_API].concat(window.SURVEY_API_FALLBACKS || [])
+    .map(function(h){ return String(h || '').replace(/\/+$/, ''); })
+    .filter(function(h, i, a){ return h && a.indexOf(h) === i; });
+  var API_PRIMARY = API_CONFIGURED[0] || '';
+  var API_LIST = API_CONFIGURED.slice();
+  // A fallback that worked after the primary failed is tried first for the next 30 minutes, so a network that cannot reach
+  // the primary does not pay a failed attempt on every page it opens.
+  (function(){
+    try{
+      var pref = JSON.parse(localStorage.getItem('sv_api_pref') || 'null'), at = pref ? API_LIST.indexOf(pref.h) : -1;
+      if(pref && pref.until > Date.now() && at > 0){ API_LIST.splice(at, 1); API_LIST.unshift(pref.h); }
+    }catch(e){}
+  })();
+  var API = API_LIST[0] || '';          // the host used for saves: switched to whichever host last answered
+  function hostOnly(h){ try{ return new URL(h).host; }catch(e){ return String(h || '').slice(0, 60); } }
+  function rememberHost(h){
+    API = h;
+    try{
+      if(h === API_PRIMARY) localStorage.removeItem('sv_api_pref');
+      else localStorage.setItem('sv_api_pref', JSON.stringify({ h: h, until: Date.now() + 30 * 60 * 1000 }));
+    }catch(e){}
+  }
 
   function startSurvey(CTX){
     "use strict";
@@ -502,15 +524,18 @@
       // the same answers twice updates the same response instead of creating another one.
       var body=JSON.stringify(payload), canRetry=!!(payload.token||payload.draft_key);
       var limit=window.SURVEY_SAVE_TIMEOUT_MS||20000;
-      function attempt(){
+      // the second attempt goes to another host when one is configured (the server stores by key/token, so this is idempotent)
+      var hosts=[API].concat(API_LIST.filter(function(h){ return h!==API; }));
+      function attempt(i){
+        var host=hosts[i%hosts.length];
         var ctl=(typeof AbortController!=='undefined')?new AbortController():null;
         var timer=ctl?setTimeout(function(){ ctl.abort(); },limit):null;
-        return fetch(API+'/api/response',{method:'POST',headers:{'Content-Type':'application/json'},body:body,signal:ctl?ctl.signal:undefined})
-          .then(function(r){ clearTimeout(timer); return r; },function(e){ clearTimeout(timer); throw e; });
+        return fetch(host+'/api/response',{method:'POST',headers:{'Content-Type':'application/json'},body:body,signal:ctl?ctl.signal:undefined})
+          .then(function(r){ clearTimeout(timer); if(host!==API) rememberHost(host); return r; },function(e){ clearTimeout(timer); throw e; });
       }
-      return attempt().catch(function(e){
+      return attempt(0).catch(function(e){
           if(!canRetry) throw e;
-          return new Promise(function(res){ setTimeout(res,600); }).then(attempt);
+          return new Promise(function(res){ setTimeout(res,600); }).then(function(){ return attempt(1); });
         })
         .then(function(r){
           if(r.status===429){
@@ -747,7 +772,7 @@
   }
 
   /* ---------- loading: time limit, one retry, and a diagnostic code when it fails ---------- */
-  var LOAD_MS = window.SURVEY_LOAD_TIMEOUT_MS || 15000;
+  var LOAD_MS = window.SURVEY_LOAD_TIMEOUT_MS || (API_LIST.length > 1 ? 10000 : 15000);   // per host
   var pageKind = '?';
   function escH(x){ return String(x == null ? '' : x).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   function delay(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
@@ -779,19 +804,26 @@
       }, function(){ clearTimeout(timer); throw diag('NET', { timedOut: timedOut, ms: Date.now() - t0, retry: true }); });
     }, function(){ clearTimeout(timer); throw diag('NET', { timedOut: timedOut, ms: Date.now() - t0, retry: true }); });
   }
-  // One automatic retry for failures that can be temporary (no answer, 5xx, a non-JSON page); never for 4xx.
-  function loadSurveyData(url){
-    var attempts = 0;
-    function go(){
-      attempts++;
-      return attemptLoad(url).catch(function(d){
+  // With one host: one automatic retry for failures that can be temporary (no answer, 5xx, a non-JSON page), never for 4xx.
+  // With fallback hosts: the primary first, then each fallback straight away, on any failure except the server's own
+  // "not found" (a 403 or a challenge page can be specific to one host). The first host that answers is remembered.
+  function loadSurveyData(path){
+    var hosts = API_LIST.length ? API_LIST.slice() : [''], multi = hosts.length > 1, attempts = 0, tried = [], first = null;
+    function run(i){
+      var host = hosts[i]; attempts++;
+      return attemptLoad(host + path).then(function(res){ rememberHost(host); return res; }, function(d){
         if(!d || !d.code) throw diag('APP-ERR', { err: sanitize(d && d.message, 80), attempts: attempts });
-        d.attempts = attempts;
-        if(attempts < 2 && d.retry) return delay(800).then(go);
+        d.attempts = attempts; d.host = host; tried.push(hostOnly(host) + ':' + d.code); d.tried = tried;
+        if(!first) first = d;
+        if(multi){
+          if(i + 1 < hosts.length) return run(i + 1);
+          first.attempts = attempts; first.tried = tried; throw first;      // the main code is the primary's
+        }
+        if(attempts < 2 && d.retry) return delay(800).then(function(){ return run(0); });
         throw d;
       });
     }
-    return go();
+    return run(0);
   }
   // "No answer" is NET if the server cannot be reached at all, BLOCKED if it can (a no-cors request succeeds whenever the server
   // answers, whatever CORS says): then the browser, an extension or a security product refused the real response.
@@ -840,8 +872,9 @@
   }
   // One copyable line. It never contains the invitation token / link code (only the kind of page) or any personal data.
   function diagLine(d){
-    var line = ['SV-DIAG v1', d.code, 'host=' + apiHost(), 'site=' + location.host, 'page=' + pageKind,
+    var line = ['SV-DIAG v1', d.code, 'host=' + (d.host ? hostOnly(d.host) : apiHost()), 'site=' + location.host, 'page=' + pageKind,
       'online=' + (navigator.onLine === false ? 'no' : 'yes'), 'attempts=' + (d.attempts || 1), 'ms=' + (d.ms || 0)];
+    if(d.tried && d.tried.length > 1) line.push('tried=' + d.tried.join(','));
     if(d.status) line.push('status=' + d.status);
     if(d.ct !== undefined) line.push('ct=' + (d.ct || 'none'));
     if(d.len !== undefined) line.push('len=' + d.len);
@@ -883,10 +916,10 @@
     if(!m){ notFound(true); return; }
     pageKind = m[1];
     var base = { i: '/api/invitation/', s: '/api/survey/', c: '/api/link/' }[m[1]];
-    var url = API + base + encodeURIComponent(decodeURIComponent(m[2]));
+    var path = base + encodeURIComponent(decodeURIComponent(m[2]));
     // the page shell already shows a spinner; after a few seconds tell the respondent that it is taking longer than usual
     var slow = setTimeout(function(){ var el = document.getElementById('bootSlow'); if(el) el.hidden = false; }, 4000);
-    loadSurveyData(url).then(function(res){
+    loadSurveyData(path).then(function(res){
       clearTimeout(slow);
       if(res.notFound){ notFound(false); return; }
       try{ startSurvey(res.ctx); }
